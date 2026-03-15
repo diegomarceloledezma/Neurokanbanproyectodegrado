@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { Mail, Lock } from "lucide-react";
-import logo from "../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png";
+//import logo from "../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png";
+const logo = new URL("../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png", import.meta.url).href;
+
 
 export default function Login() {
   const navigate = useNavigate();

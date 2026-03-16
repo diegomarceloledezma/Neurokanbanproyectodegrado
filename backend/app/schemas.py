@@ -32,3 +32,14 @@ class UserCreate(BaseModel):
     password: str
     avatar_url: Optional[str] = None
     global_role_id: int
+
+
+class LoginRequest(BaseModel):
+    username_or_email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserBase

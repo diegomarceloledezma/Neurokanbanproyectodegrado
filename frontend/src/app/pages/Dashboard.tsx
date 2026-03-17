@@ -1,53 +1,113 @@
+import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle, Clock, Users, TrendingUp, Sparkles } from "lucide-react";
 import { useNavigate } from "react-router";
 import { tasks, teamMembers } from "../data/mockData";
+import { getCurrentUser, type UserResponse } from "../services/authService";
+import { clearSession, getAccessToken } from "../services/sessionService";
 
 export default function Dashboard() {
   const navigate = useNavigate();
 
-  const pendingTasks = tasks.filter(t => t.status === 'pending').length;
-  const inProgressTasks = tasks.filter(t => t.status === 'in-progress').length;
-  const overdueTasks = tasks.filter(t => new Date(t.deadline) < new Date() && t.status !== 'completed').length;
+  const [currentUser, setCurrentUser] = useState<UserResponse | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [sessionError, setSessionError] = useState("");
+
+  useEffect(() => {
+    const loadSession = async () => {
+      const token = getAccessToken();
+
+      if (!token) {
+        navigate("/login");
+        return;
+      }
+
+      try {
+        const user = await getCurrentUser(token);
+        setCurrentUser(user);
+      } catch (error) {
+        clearSession();
+        setSessionError("Tu sesión expiró o no es válida. Inicia sesión nuevamente.");
+        navigate("/login");
+      } finally {
+        setSessionLoading(false);
+      }
+    };
+
+    loadSession();
+  }, [navigate]);
+
+  const pendingTasks = tasks.filter((t) => t.status === "pending").length;
+  const inProgressTasks = tasks.filter((t) => t.status === "in-progress").length;
+  const overdueTasks = tasks.filter((t) => new Date(t.deadline) < new Date() && t.status !== "completed").length;
   const teamLoad = Math.round(teamMembers.reduce((acc, m) => acc + m.currentLoad, 0) / teamMembers.length);
 
   const recentRecommendations = [
     {
-      id: 'rec-1',
-      task: "Implementar autenticación OAuth",
-      recommendation: "Carlos Mendoza (92% match)",
+      id: "rec-1",
+      task: "Preparar propuesta de presentación institucional",
+      recommendation: "Laura Soto (91% de compatibilidad)",
       status: "Asignado",
     },
     {
-      id: 'rec-2',
-      task: "Configurar CI/CD pipeline",
-      recommendation: "Diego Ruiz (95% match)",
+      id: "rec-2",
+      task: "Organizar cronograma de actividades del equipo",
+      recommendation: "Carlos Mendoza (89% de compatibilidad)",
       status: "Pendiente",
     },
     {
-      id: 'rec-3',
-      task: "Diseñar componente de carrito",
-      recommendation: "Ana García (88% match)",
+      id: "rec-3",
+      task: "Diseñar material de apoyo para la reunión",
+      recommendation: "Ana García (87% de compatibilidad)",
       status: "Pendiente",
     },
   ];
+
+  if (sessionLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
+        Cargando sesión...
+      </div>
+    );
+  }
 
   return (
     <div className="nk-dashboard-page space-y-6">
       <div className="nk-page-header">
         <h1 className="nk-page-title text-3xl text-white mb-2">Dashboard</h1>
-        <p className="nk-page-subtitle text-slate-400">Resumen general de tu equipo y proyectos</p>
+        <p className="nk-page-subtitle text-slate-400">
+          Resumen general del equipo, tareas y recomendaciones recientes
+        </p>
       </div>
 
-      {/* Tarjetas de resumen */}
+      {currentUser && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h2 className="text-white text-lg mb-1">
+            Hola, {currentUser.full_name}
+          </h2>
+          <p className="text-slate-400 text-sm">
+            Usuario: {currentUser.username} · Rol:{" "}
+            {currentUser.global_role?.name ?? "Sin rol"}
+          </p>
+        </div>
+      )}
+
+      {sessionError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {sessionError}
+        </div>
+      )}
+
       <div className="nk-stats-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <div className="nk-stat-card nk-stat-card--pending bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all" data-stat-type="pending-tasks">
           <div className="nk-stat-card__inner flex items-center justify-between mb-4">
             <div className="nk-stat-card__icon-wrapper p-3 bg-yellow-500/10 rounded-lg">
               <Clock className="nk-stat-card__icon w-6 h-6 text-yellow-500" />
             </div>
-            <span className="nk-stat-card__value text-2xl text-white" data-value={pendingTasks}>{pendingTasks}</span>
+            <span className="nk-stat-card__value text-2xl text-white" data-value={pendingTasks}>
+              {pendingTasks}
+            </span>
           </div>
-          <h3 className="nk-stat-card__label text-slate-400 text-sm">Tareas Pendientes</h3>
+          <h3 className="nk-stat-card__label text-slate-400 text-sm">Tareas pendientes</h3>
         </div>
 
         <div className="nk-stat-card nk-stat-card--in-progress bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all" data-stat-type="in-progress-tasks">
@@ -55,9 +115,11 @@ export default function Dashboard() {
             <div className="nk-stat-card__icon-wrapper p-3 bg-cyan-500/10 rounded-lg">
               <TrendingUp className="nk-stat-card__icon w-6 h-6 text-cyan-500" />
             </div>
-            <span className="nk-stat-card__value text-2xl text-white" data-value={inProgressTasks}>{inProgressTasks}</span>
+            <span className="nk-stat-card__value text-2xl text-white" data-value={inProgressTasks}>
+              {inProgressTasks}
+            </span>
           </div>
-          <h3 className="nk-stat-card__label text-slate-400 text-sm">En Progreso</h3>
+          <h3 className="nk-stat-card__label text-slate-400 text-sm">En progreso</h3>
         </div>
 
         <div className="nk-stat-card nk-stat-card--overdue bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all" data-stat-type="overdue-tasks">
@@ -65,9 +127,11 @@ export default function Dashboard() {
             <div className="nk-stat-card__icon-wrapper p-3 bg-red-500/10 rounded-lg">
               <AlertCircle className="nk-stat-card__icon w-6 h-6 text-red-500" />
             </div>
-            <span className="nk-stat-card__value text-2xl text-white" data-value={overdueTasks}>{overdueTasks}</span>
+            <span className="nk-stat-card__value text-2xl text-white" data-value={overdueTasks}>
+              {overdueTasks}
+            </span>
           </div>
-          <h3 className="nk-stat-card__label text-slate-400 text-sm">Tareas Vencidas</h3>
+          <h3 className="nk-stat-card__label text-slate-400 text-sm">Tareas vencidas</h3>
         </div>
 
         <div className="nk-stat-card nk-stat-card--team-load bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all" data-stat-type="team-load">
@@ -75,20 +139,21 @@ export default function Dashboard() {
             <div className="nk-stat-card__icon-wrapper p-3 bg-purple-500/10 rounded-lg">
               <Users className="nk-stat-card__icon w-6 h-6 text-purple-500" />
             </div>
-            <span className="nk-stat-card__value text-2xl text-white" data-value={teamLoad}>{teamLoad}%</span>
+            <span className="nk-stat-card__value text-2xl text-white" data-value={teamLoad}>
+              {teamLoad}%
+            </span>
           </div>
-          <h3 className="nk-stat-card__label text-slate-400 text-sm">Carga del Equipo</h3>
+          <h3 className="nk-stat-card__label text-slate-400 text-sm">Carga del equipo</h3>
         </div>
       </div>
 
       <div className="nk-dashboard-content grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Recomendaciones Recientes */}
         <div className="nk-recommendations-section bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="nk-section-header flex items-center gap-3 mb-6">
             <div className="nk-section-icon-wrapper p-2 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 rounded-lg">
               <Sparkles className="nk-section-icon w-5 h-5 text-cyan-400" />
             </div>
-            <h2 className="nk-section-title text-xl text-white">Recomendaciones Recientes</h2>
+            <h2 className="nk-section-title text-xl text-white">Recomendaciones recientes</h2>
           </div>
 
           <div className="nk-recommendations-list space-y-4">
@@ -112,19 +177,20 @@ export default function Dashboard() {
                     {rec.status}
                   </span>
                 </div>
-                <p className="nk-recommendation-item__member text-cyan-400 text-sm">{rec.recommendation}</p>
+                <p className="nk-recommendation-item__member text-cyan-400 text-sm">
+                  {rec.recommendation}
+                </p>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Métricas Rápidas del Equipo */}
         <div className="nk-team-metrics-section bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="nk-section-header flex items-center gap-3 mb-6">
             <div className="nk-section-icon-wrapper p-2 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 rounded-lg">
               <CheckCircle className="nk-section-icon w-5 h-5 text-cyan-400" />
             </div>
-            <h2 className="nk-section-title text-xl text-white">Métricas del Equipo</h2>
+            <h2 className="nk-section-title text-xl text-white">Métricas del equipo</h2>
           </div>
 
           <div className="nk-team-members-list space-y-5">
@@ -133,7 +199,7 @@ export default function Dashboard() {
                 <div className="nk-team-member-item__header flex items-center justify-between mb-2">
                   <div className="nk-team-member-item__info flex items-center gap-3">
                     <div className="nk-avatar w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-xs">
-                      {member.name.split(' ').map(n => n[0]).join('')}
+                      {member.name.split(" ").map((n) => n[0]).join("")}
                     </div>
                     <div>
                       <p className="nk-team-member-item__name text-white text-sm">{member.name}</p>

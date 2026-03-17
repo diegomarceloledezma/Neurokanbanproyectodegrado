@@ -12,6 +12,7 @@ import TeamMetrics from "./pages/TeamMetrics";
 import DecisionHistory from "./pages/DecisionHistory";
 import MainLayout from "./components/MainLayout";
 import NotFound from "./pages/NotFound";
+import ProtectedRoute from "./components/ProtectedRoute";
 
 export const router = createBrowserRouter([
   {
@@ -24,7 +25,11 @@ export const router = createBrowserRouter([
   },
   {
     path: "/",
-    Component: MainLayout,
+    Component: () => (
+      <ProtectedRoute>
+        <MainLayout />
+      </ProtectedRoute>
+    ),
     children: [
       { index: true, Component: Dashboard },
       { path: "project/:id", Component: Project },

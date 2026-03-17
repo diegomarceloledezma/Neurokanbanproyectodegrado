@@ -1,16 +1,17 @@
 import { Outlet, NavLink, useNavigate } from "react-router";
-import { 
-  LayoutDashboard, 
-  FolderKanban, 
-  CheckSquare, 
-  Users, 
-  BarChart3, 
-  History, 
-  Settings, 
+import {
+  LayoutDashboard,
+  FolderKanban,
+  CheckSquare,
+  Users,
+  BarChart3,
+  History,
   Bell,
   LogOut,
 } from "lucide-react";
-import logo from "../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png";
+import { clearSession, getStoredUser } from "../services/sessionService";
+
+const logo = new URL("../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png", import.meta.url).href;
 
 const menuItems = [
   { name: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -23,15 +24,39 @@ const menuItems = [
 
 export default function MainLayout() {
   const navigate = useNavigate();
+  const currentUser = getStoredUser();
+
+  const displayName = currentUser?.full_name ?? "Usuario";
+
+  const roleLabels: Record<string, string> = {
+    leader: "Líder de equipo",
+    member: "Integrante del equipo",
+    admin: "Administrador",
+  };
+
+  const displayRole = currentUser?.global_role?.name
+    ? roleLabels[currentUser.global_role.name] ?? currentUser.global_role.name
+    : "Sin rol";
+
+  const initials = displayName
+    .split(" ")
+    .map((name) => name[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+
+  const handleLogout = () => {
+    clearSession();
+    navigate("/login");
+  };
 
   return (
     <div className="nk-layout flex h-screen bg-slate-950">
-      {/* Sidebar */}
       <aside className="nk-sidebar w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="nk-sidebar__logo-wrapper p-6 border-b border-slate-800">
           <img src={logo} alt="NeuroKanban" className="nk-logo h-10" />
         </div>
-        
+
         <nav className="nk-sidebar__nav flex-1 p-4 space-y-1">
           {menuItems.map((item) => (
             <NavLink
@@ -54,38 +79,36 @@ export default function MainLayout() {
 
         <div className="nk-sidebar__footer p-4 border-t border-slate-800">
           <button
-            onClick={() => navigate("/login")}
+            onClick={handleLogout}
             className="nk-logout-button flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800/50 w-full transition-all"
           >
             <LogOut className="nk-logout-button__icon w-5 h-5" />
-            <span className="nk-logout-button__text">Cerrar Sesión</span>
+            <span className="nk-logout-button__text">Cerrar sesión</span>
           </button>
         </div>
       </aside>
 
-      {/* Main Content */}
       <div className="nk-main flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
         <header className="nk-header h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6">
           <div className="nk-header__welcome text-slate-400 text-sm">
-            Bienvenido, <span className="nk-header__username text-slate-200">Líder de Equipo</span>
+            Hola, <span className="nk-header__username text-slate-200">{displayName}</span>
+            <span className="text-slate-500"> · {displayRole}</span>
           </div>
-          
+
           <div className="nk-header__actions flex items-center gap-4">
             <button className="nk-notification-button relative p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all">
               <Bell className="nk-notification-button__icon w-5 h-5" />
               <span className="nk-notification-badge absolute top-1 right-1 w-2 h-2 bg-cyan-500 rounded-full"></span>
             </button>
-            
+
             <div className="nk-user-avatar-wrapper flex items-center gap-3">
               <div className="nk-user-avatar w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-sm">
-                LT
+                {initials}
               </div>
             </div>
           </div>
         </header>
 
-        {/* Page Content */}
         <main className="nk-content flex-1 overflow-auto bg-slate-950 p-6">
           <Outlet />
         </main>

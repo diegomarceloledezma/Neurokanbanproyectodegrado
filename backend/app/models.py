@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, ForeignKey, Date
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -13,6 +13,16 @@ class Role(Base):
     description = Column(Text)
 
     users = relationship("User", back_populates="global_role")
+
+
+class Area(Base):
+    __tablename__ = "areas"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text)
+
+    projects = relationship("Project", back_populates="area")
 
 
 class User(Base):
@@ -30,3 +40,22 @@ class User(Base):
     updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
     global_role = relationship("Role", back_populates="users")
+    created_projects = relationship("Project", back_populates="creator")
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    team_id = Column(BigInteger, nullable=False)
+    area_id = Column(BigInteger, ForeignKey("areas.id"))
+    name = Column(String(150), nullable=False)
+    description = Column(Text)
+    status = Column(String(30), nullable=False, default="active")
+    start_date = Column(Date)
+    end_date = Column(Date)
+    created_by = Column(BigInteger, ForeignKey("users.id"))
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    area = relationship("Area", back_populates="projects")
+    creator = relationship("User", back_populates="created_projects")

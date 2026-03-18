@@ -66,3 +66,95 @@ class ProjectBase(BaseModel):
     creator: Optional[UserBase] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskBase(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    description: Optional[str] = None
+    task_type: str
+    priority: str
+    complexity: int
+    status: str
+    estimated_hours: Optional[float] = None
+    actual_hours: Optional[float] = None
+    due_date: Optional[date] = None
+    created_at: datetime
+    updated_at: datetime
+    assignee: Optional[UserBase] = None
+    creator: Optional[UserBase] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskCreate(BaseModel):
+    project_id: int
+    title: str
+    description: Optional[str] = None
+    task_type: str
+    priority: str
+    complexity: int
+    status: str = "pending"
+    estimated_hours: Optional[float] = None
+    actual_hours: Optional[float] = 0
+    due_date: Optional[date] = None
+    created_by: Optional[int] = None
+    assigned_to: Optional[int] = None
+
+
+class MemberTaskItem(BaseModel):
+    id: int
+    title: str
+    priority: str
+    status: str
+    complexity: int
+    estimated_hours: Optional[float] = None
+    actual_hours: Optional[float] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemberProfileResponse(BaseModel):
+    id: int
+    full_name: str
+    username: str
+    email: EmailStr
+    avatar_url: Optional[str] = None
+    role_name: str
+    active_tasks: int
+    completed_tasks: int
+    total_tasks: int
+    completion_rate: float
+    current_load: float
+    availability: float
+    experience_level: Optional[float] = None
+    active_task_items: list[MemberTaskItem]
+    completed_task_items: list[MemberTaskItem]
+
+
+class RecommendationMember(BaseModel):
+    id: int
+    full_name: str
+    email: EmailStr
+    role_name: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskRecommendationItem(BaseModel):
+    member: RecommendationMember
+    score: float
+    reason: str
+    availability: str
+    current_load: str
+    risk_level: str
+    active_tasks: int
+    matching_skills: list[str] = []
+
+
+class TaskRecommendationResponse(BaseModel):
+    task_id: int
+    task_title: str
+    strategy: str
+    recommendations: list[TaskRecommendationItem]

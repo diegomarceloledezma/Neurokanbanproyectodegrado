@@ -9,22 +9,56 @@ import {
   Bell,
   LogOut,
 } from "lucide-react";
-import { clearSession, getStoredUser } from "../services/sessionService";
-
-const logo = new URL("../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png", import.meta.url).href;
-
-const menuItems = [
-  { name: "Dashboard", path: "/", icon: LayoutDashboard },
-  { name: "Proyectos", path: "/project/proj-1", icon: FolderKanban },
-  { name: "Tareas", path: "/kanban/proj-1", icon: CheckSquare },
-  { name: "Equipo", path: "/member/1", icon: Users },
-  { name: "Métricas", path: "/metrics", icon: BarChart3 },
-  { name: "Historial", path: "/history", icon: History },
-];
+import { useEffect, useMemo, useState } from "react";
+import { clearSession, getAccessToken, getStoredUser } from "../services/sessionService";
+import { getProjects, type ProjectResponse } from "../services/projectService";
 
 export default function MainLayout() {
   const navigate = useNavigate();
   const currentUser = getStoredUser();
+
+  const [projects, setProjects] = useState<ProjectResponse[]>([]);
+
+  useEffect(() => {
+    const loadProjects = async () => {
+      const token = getAccessToken();
+
+      if (!token) return;
+
+      try {
+        const data = await getProjects(token);
+        setProjects(data);
+      } catch (error) {
+        console.error("No se pudieron cargar los proyectos para el menú lateral", error);
+      }
+    };
+
+    loadProjects();
+  }, []);
+
+  const firstProjectId = projects.length > 0 ? projects[0].id : null;
+
+  const menuItems = useMemo(
+    () => [
+      { name: "Dashboard", path: "/", icon: LayoutDashboard, disabled: false },
+      {
+        name: "Proyectos",
+        path: firstProjectId ? `/project/${firstProjectId}` : "#",
+        icon: FolderKanban,
+        disabled: !firstProjectId,
+      },
+      {
+        name: "Tareas",
+        path: firstProjectId ? `/kanban/${firstProjectId}` : "#",
+        icon: CheckSquare,
+        disabled: !firstProjectId,
+      },
+      { name: "Equipo", path: "/member/1", icon: Users, disabled: false },
+      { name: "Métricas", path: "/metrics", icon: BarChart3, disabled: false },
+      { name: "Historial", path: "/history", icon: History, disabled: false },
+    ],
+    [firstProjectId]
+  );
 
   const displayName = currentUser?.full_name ?? "Usuario";
 
@@ -46,6 +80,10 @@ export default function MainLayout() {
     .toUpperCase();
 
   const handleLogout = () => {
+    const confirmed = window.confirm("¿Estás seguro de que deseas cerrar sesión?");
+
+    if (!confirmed) return;
+
     clearSession();
     navigate("/login");
   };
@@ -54,27 +92,43 @@ export default function MainLayout() {
     <div className="nk-layout flex h-screen bg-slate-950">
       <aside className="nk-sidebar w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
         <div className="nk-sidebar__logo-wrapper p-6 border-b border-slate-800">
-          <img src={logo} alt="NeuroKanban" className="nk-logo h-10" />
+          <img
+            src={new URL("../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png", import.meta.url).href}
+            alt="NeuroKanban"
+            className="nk-logo h-10"
+          />
         </div>
 
         <nav className="nk-sidebar__nav flex-1 p-4 space-y-1">
-          {menuItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              end={item.path === "/"}
-              className={({ isActive }) =>
-                `nk-nav-item flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
-                  isActive
-                    ? "nk-nav-item--active bg-gradient-to-r from-cyan-500/10 to-purple-500/10 text-cyan-400 border border-cyan-500/20"
-                    : "nk-nav-item--inactive text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-                }`
-              }
-            >
-              <item.icon className="nk-nav-item__icon w-5 h-5" />
-              <span className="nk-nav-item__text">{item.name}</span>
-            </NavLink>
-          ))}
+          {menuItems.map((item) =>
+            item.disabled ? (
+              <button
+                key={item.name}
+                type="button"
+                disabled
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-600 cursor-not-allowed"
+              >
+                <item.icon className="nk-nav-item__icon w-5 h-5" />
+                <span className="nk-nav-item__text">{item.name}</span>
+              </button>
+            ) : (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                end={item.path === "/"}
+                className={({ isActive }) =>
+                  `nk-nav-item flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                    isActive
+                      ? "nk-nav-item--active bg-gradient-to-r from-cyan-500/10 to-purple-500/10 text-cyan-400 border border-cyan-500/20"
+                      : "nk-nav-item--inactive text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                  }`
+                }
+              >
+                <item.icon className="nk-nav-item__icon w-5 h-5" />
+                <span className="nk-nav-item__text">{item.name}</span>
+              </NavLink>
+            )
+          )}
         </nav>
 
         <div className="nk-sidebar__footer p-4 border-t border-slate-800">

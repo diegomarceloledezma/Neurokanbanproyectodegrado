@@ -30,7 +30,12 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
-    if not verify_password(payload.password, user.password_hash):
+    try:
+        is_valid_password = verify_password(payload.password, user.password_hash)
+    except Exception:
+        is_valid_password = False
+
+    if not is_valid_password:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
     token = create_access_token(

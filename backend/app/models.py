@@ -1,4 +1,4 @@
-from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, ForeignKey, Date
+from sqlalchemy import Column, BigInteger, String, Text, Boolean, DateTime, ForeignKey, Date, Numeric, Integer
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
@@ -41,6 +41,8 @@ class User(Base):
 
     global_role = relationship("Role", back_populates="users")
     created_projects = relationship("Project", back_populates="creator")
+    assigned_tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assigned_to")
+    created_tasks = relationship("Task", back_populates="creator", foreign_keys="Task.created_by")
 
 
 class Project(Base):
@@ -59,3 +61,28 @@ class Project(Base):
 
     area = relationship("Area", back_populates="projects")
     creator = relationship("User", back_populates="created_projects")
+    tasks = relationship("Task", back_populates="project")
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    project_id = Column(BigInteger, ForeignKey("projects.id"), nullable=False)
+    title = Column(String(180), nullable=False)
+    description = Column(Text)
+    task_type = Column(String(50), nullable=False)
+    priority = Column(String(20), nullable=False, default="medium")
+    complexity = Column(Integer, nullable=False)
+    status = Column(String(30), nullable=False, default="pending")
+    estimated_hours = Column(Numeric(6, 2))
+    actual_hours = Column(Numeric(6, 2), default=0)
+    due_date = Column(Date)
+    created_by = Column(BigInteger, ForeignKey("users.id"))
+    assigned_to = Column(BigInteger, ForeignKey("users.id"))
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    updated_at = Column(DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
+    project = relationship("Project", back_populates="tasks")
+    assignee = relationship("User", back_populates="assigned_tasks", foreign_keys=[assigned_to])
+    creator = relationship("User", back_populates="created_tasks", foreign_keys=[created_by])

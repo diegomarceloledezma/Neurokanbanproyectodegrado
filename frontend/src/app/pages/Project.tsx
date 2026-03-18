@@ -1,47 +1,114 @@
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Calendar, Users, TrendingUp, Plus, Sparkles } from "lucide-react";
-import { projects, tasks } from "../data/mockData";
+import { getProjectById, type ProjectResponse } from "../services/projectService";
+import { getAccessToken } from "../services/sessionService";
+
+const formatDate = (date?: string | null) => {
+  if (!date) return "No definida";
+
+  return new Date(date).toLocaleDateString("es-ES", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+};
+
+const statusLabels: Record<string, string> = {
+  planned: "Planificado",
+  active: "Activo",
+  paused: "Pausado",
+  completed: "Completado",
+  cancelled: "Cancelado",
+};
 
 export default function Project() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const project = projects.find(p => p.id === id);
 
-  if (!project) {
+  const [project, setProject] = useState<ProjectResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const loadProject = async () => {
+      if (!id) {
+        setError("No se encontró el identificador del proyecto");
+        setLoading(false);
+        return;
+      }
+
+      const token = getAccessToken();
+
+      if (!token) {
+        navigate("/login");
+        return;
+      }
+
+      try {
+        const data = await getProjectById(id, token);
+        setProject(data);
+      } catch (err) {
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError("Ocurrió un error al cargar el proyecto");
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadProject();
+  }, [id, navigate]);
+
+  if (loading) {
     return (
-      <div className="text-white">
-        <p>Proyecto no encontrado</p>
+      <div className="text-slate-300">
+        Cargando proyecto...
       </div>
     );
   }
 
-  const projectTasks = tasks.filter(t => t.projectId === project.id);
-  const completedTasks = projectTasks.filter(t => t.status === 'completed').length;
-  const totalTasks = projectTasks.length;
+  if (error || !project) {
+    return (
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
+        {error || "Proyecto no encontrado"}
+      </div>
+    );
+  }
+
+  const displayStatus = statusLabels[project.status] ?? project.status;
+  const areaName = project.area?.name ?? "No definida";
+  const creatorName = project.creator?.full_name ?? "No disponible";
+  const creatorRole = project.creator?.global_role?.name ?? "Sin rol";
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <div className="flex items-start justify-between mb-4">
           <div>
             <h1 className="text-3xl text-white mb-2">{project.name}</h1>
-            <p className="text-slate-400">{project.description}</p>
+            <p className="text-slate-400">
+              {project.description || "Este proyecto aún no tiene una descripción registrada."}
+            </p>
           </div>
+
           <div className="flex gap-3">
             <button
               onClick={() => navigate(`/task/create/${project.id}`)}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-600 text-white rounded-lg hover:from-cyan-600 hover:to-purple-700 transition-all shadow-lg shadow-cyan-500/20"
             >
               <Plus className="w-4 h-4" />
-              Crear Tarea
+              Crear tarea
             </button>
+
             <button
               onClick={() => navigate(`/recommendation/task-2`)}
               className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"
             >
               <Sparkles className="w-4 h-4 text-cyan-400" />
-              Ver Recomendaciones
+              Ver recomendaciones
             </button>
           </div>
         </div>
@@ -52,8 +119,8 @@ export default function Project() {
               <TrendingUp className="w-5 h-5 text-cyan-500" />
             </div>
             <div>
-              <p className="text-slate-400 text-sm">Progreso General</p>
-              <p className="text-white text-xl">{project.progress}%</p>
+              <p className="text-slate-400 text-sm">Estado del proyecto</p>
+              <p className="text-white text-xl">{displayStatus}</p>
             </div>
           </div>
 
@@ -62,8 +129,8 @@ export default function Project() {
               <Calendar className="w-5 h-5 text-purple-500" />
             </div>
             <div>
-              <p className="text-slate-400 text-sm">Sprint Actual</p>
-              <p className="text-white text-xl">{project.sprint}</p>
+              <p className="text-slate-400 text-sm">Área del proyecto</p>
+              <p className="text-white text-xl">{areaName}</p>
             </div>
           </div>
 
@@ -72,70 +139,36 @@ export default function Project() {
               <Users className="w-5 h-5 text-green-500" />
             </div>
             <div>
-              <p className="text-slate-400 text-sm">Integrantes</p>
-              <p className="text-white text-xl">{project.members.length}</p>
+              <p className="text-slate-400 text-sm">Creado por</p>
+              <p className="text-white text-xl">{creatorName}</p>
             </div>
-          </div>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-slate-400 text-sm">
-              {completedTasks} de {totalTasks} tareas completadas
-            </p>
-            <p className="text-slate-400 text-sm">{project.progress}%</p>
-          </div>
-          <div className="w-full bg-slate-800 rounded-full h-3">
-            <div
-              className="h-3 rounded-full bg-gradient-to-r from-cyan-500 to-purple-600"
-              style={{ width: `${project.progress}%` }}
-            ></div>
           </div>
         </div>
       </div>
 
-      {/* Team Members */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h2 className="text-xl text-white mb-4">Integrantes del Equipo</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {project.members.map((member) => (
-            <div
-              key={member.id}
-              className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/30 transition-all cursor-pointer"
-              onClick={() => navigate(`/member/${member.id}`)}
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white">
-                  {member.name.split(' ').map(n => n[0]).join('')}
-                </div>
-                <div>
-                  <p className="text-white">{member.name}</p>
-                  <p className="text-slate-400 text-sm">{member.role}</p>
-                </div>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-slate-400">{member.activeTasks} tareas activas</span>
-                <span className={`${member.currentLoad > 70 ? 'text-red-400' : 'text-cyan-400'}`}>
-                  {member.currentLoad}% carga
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+        <h2 className="text-xl text-white mb-4">Información general</h2>
 
-      {/* Sprint Summary */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h2 className="text-xl text-white mb-4">Resumen del Sprint</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-4 bg-slate-800/50 rounded-lg">
-            <p className="text-slate-400 text-sm mb-1">Fecha de Inicio</p>
-            <p className="text-white">{new Date(project.startDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            <p className="text-slate-400 text-sm mb-1">Fecha de inicio</p>
+            <p className="text-white">{formatDate(project.start_date)}</p>
           </div>
+
           <div className="p-4 bg-slate-800/50 rounded-lg">
-            <p className="text-slate-400 text-sm mb-1">Fecha de Fin</p>
-            <p className="text-white">{new Date(project.endDate).toLocaleDateString('es-ES', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            <p className="text-slate-400 text-sm mb-1">Fecha de finalización</p>
+            <p className="text-white">{formatDate(project.end_date)}</p>
+          </div>
+
+          <div className="p-4 bg-slate-800/50 rounded-lg">
+            <p className="text-slate-400 text-sm mb-1">Responsable de creación</p>
+            <p className="text-white">{creatorName}</p>
+            <p className="text-slate-500 text-sm mt-1">{creatorRole}</p>
+          </div>
+
+          <div className="p-4 bg-slate-800/50 rounded-lg">
+            <p className="text-slate-400 text-sm mb-1">Registro del proyecto</p>
+            <p className="text-white">{formatDate(project.created_at)}</p>
           </div>
         </div>
 
@@ -143,7 +176,7 @@ export default function Project() {
           onClick={() => navigate(`/kanban/${project.id}`)}
           className="w-full mt-6 py-3 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"
         >
-          Ver Tablero Kanban
+          Ver tablero Kanban
         </button>
       </div>
     </div>

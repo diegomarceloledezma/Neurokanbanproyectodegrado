@@ -61,6 +61,16 @@ export type TaskCreatePayload = {
   assigned_to?: number | null;
 };
 
+export type TaskAssignPayload = {
+  assigned_to: number;
+  assigned_by?: number;
+  source?: string;
+  strategy?: string;
+  recommendation_score?: number;
+  risk_level?: string;
+  reason?: string;
+};
+
 export async function getTasksByProject(projectId: string, token: string): Promise<TaskResponse[]> {
   const response = await fetch(`${API_BASE_URL}/tasks/project/${projectId}`, {
     method: "GET",
@@ -106,6 +116,28 @@ export async function createTask(payload: TaskCreatePayload, token: string): Pro
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
     throw new Error(errorData?.detail || "No se pudo crear la tarea");
+  }
+
+  return response.json();
+}
+
+export async function assignTask(
+  taskId: string,
+  payload: TaskAssignPayload,
+  token: string
+): Promise<TaskResponse> {
+  const response = await fetch(`${API_BASE_URL}/tasks/${taskId}/assign`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.detail || "No se pudo asignar la tarea");
   }
 
   return response.json();

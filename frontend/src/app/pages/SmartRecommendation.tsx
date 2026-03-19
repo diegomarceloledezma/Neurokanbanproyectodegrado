@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
 import { Sparkles, TrendingUp, AlertTriangle, CheckCircle, User } from "lucide-react";
-import { getTaskById, type TaskResponse } from "../services/taskService";
+import { getTaskById, assignTask, type TaskResponse } from "../services/taskService";
 import {
   getTaskRecommendations,
   type TaskRecommendationResponse,
+  type TaskRecommendationItem,
 } from "../services/recommendationService";
-import { getAccessToken } from "../services/sessionService";
+import { getAccessToken, getStoredUser } from "../services/sessionService";
+
+const strategyOptions = [
+  { value: "balance", label: "Balance" },
+  { value: "efficiency", label: "Eficiencia" },
+  { value: "urgency", label: "Urgencia" },
+  { value: "learning", label: "Aprendizaje" },
+];
 
 export default function SmartRecommendation() {
   const { taskId } = useParams();
@@ -15,11 +23,14 @@ export default function SmartRecommendation() {
   const [task, setTask] = useState<TaskResponse | null>(null);
   const [recommendationData, setRecommendationData] =
     useState<TaskRecommendationResponse | null>(null);
+  const [selectedStrategy, setSelectedStrategy] = useState("balance");
   const [loading, setLoading] = useState(true);
+  const [reloadingRecommendations, setReloadingRecommendations] = useState(false);
+  const [assigningMemberId, setAssigningMemberId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const loadData = async () => {
+    const loadTask = async () => {
       if (!taskId) {
         setError("No se encontró el identificador de la tarea");
         setLoading(false);
@@ -34,26 +45,81 @@ export default function SmartRecommendation() {
       }
 
       try {
-        const [taskData, recommendations] = await Promise.all([
-          getTaskById(taskId, token),
-          getTaskRecommendations(taskId, token),
-        ]);
-
+        const taskData = await getTaskById(taskId, token);
         setTask(taskData);
-        setRecommendationData(recommendations);
       } catch (err) {
-        if (err instanceof Error) {
-          setError(err.message);
-        } else {
-          setError("Ocurrió un error al cargar la recomendación");
-        }
+        if (err instanceof Error) setError(err.message);
+        else setError("Ocurrió un error al cargar la tarea");
       } finally {
         setLoading(false);
       }
     };
 
-    loadData();
+    loadTask();
   }, [taskId, navigate]);
+
+  useEffect(() => {
+    const loadRecommendations = async () => {
+      if (!taskId) return;
+
+      const token = getAccessToken();
+      if (!token) {
+        navigate("/login");
+        return;
+      }
+
+      try {
+        setReloadingRecommendations(true);
+        const recommendations = await getTaskRecommendations(taskId, token, selectedStrategy);
+        setRecommendationData(recommendations);
+      } catch (err) {
+        if (err instanceof Error) setError(err.message);
+        else setError("Ocurrió un error al cargar la recomendación");
+      } finally {
+        setReloadingRecommendations(false);
+      }
+    };
+
+    loadRecommendations();
+  }, [taskId, selectedStrategy, navigate]);
+
+  const handleAssign = async (rec: TaskRecommendationItem) => {
+    if (!taskId || !recommendationData) return;
+
+    const token = getAccessToken();
+    const currentUser = getStoredUser();
+
+    if (!token || !currentUser) {
+      navigate("/login");
+      return;
+    }
+
+    setError("");
+    setAssigningMemberId(rec.member.id);
+
+    try {
+      await assignTask(
+        taskId,
+        {
+          assigned_to: rec.member.id,
+          assigned_by: currentUser.id,
+          source: "recommendation",
+          strategy: recommendationData.strategy,
+          recommendation_score: rec.score,
+          risk_level: rec.risk_level,
+          reason: rec.reason,
+        },
+        token
+      );
+
+      navigate(`/task/${taskId}`);
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo asignar la tarea");
+    } finally {
+      setAssigningMemberId(null);
+    }
+  };
 
   const riskColors: Record<string, string> = {
     low: "text-green-400 bg-green-500/10 border-green-500/20",
@@ -74,12 +140,23 @@ export default function SmartRecommendation() {
     critical: "Crítica",
   };
 
+  const roleLabels: Record<string, string> = {
+    leader: "Líder de equipo",
+    member: "Integrante del equipo",
+    admin: "Administrador",
+  };
+
+  const strategyDescriptions: Record<string, string> = {
+    balance: "Busca equilibrio entre carga, disponibilidad y desempeño.",
+    efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
+    urgency: "Favorece rapidez de respuesta y menor saturación.",
+    learning: "Promueve desarrollo del equipo con riesgo controlado.",
+  };
+
   const daysRemaining = (dueDate?: string | null) => {
     if (!dueDate) return "Sin fecha límite";
-
     const diff = new Date(dueDate).getTime() - new Date().getTime();
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-
     if (days < 0) return "Fecha vencida";
     return `${days} días restantes`;
   };
@@ -88,10 +165,18 @@ export default function SmartRecommendation() {
     return <div className="text-slate-300">Cargando recomendación...</div>;
   }
 
-  if (error || !task || !recommendationData) {
+  if (error && (!task || !recommendationData)) {
     return (
       <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        {error || "No se pudo cargar la recomendación"}
+        {error}
+      </div>
+    );
+  }
+
+  if (!task) {
+    return (
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
+        No se pudo cargar la tarea
       </div>
     );
   }
@@ -111,6 +196,12 @@ export default function SmartRecommendation() {
           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {error}
+        </div>
+      )}
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <h2 className="text-xl text-white mb-4">Tarea seleccionada</h2>
@@ -145,6 +236,38 @@ export default function SmartRecommendation() {
         </div>
       </div>
 
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-end gap-4 md:justify-between">
+          <div>
+            <h2 className="text-xl text-white mb-2">Estrategia de asignación</h2>
+            <p className="text-slate-400 text-sm">
+              Elige el enfoque con el que quieres calcular la recomendación.
+            </p>
+          </div>
+
+          <div className="min-w-[240px]">
+            <label className="block text-sm text-slate-300 mb-2">Estrategia</label>
+            <select
+              value={selectedStrategy}
+              onChange={(e) => setSelectedStrategy(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+            >
+              {strategyOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="p-4 bg-slate-800/50 rounded-lg">
+          <p className="text-slate-300 text-sm">
+            {strategyDescriptions[selectedStrategy]}
+          </p>
+        </div>
+      </div>
+
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <h2 className="text-xl text-white mb-4">Resumen del análisis</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -153,7 +276,9 @@ export default function SmartRecommendation() {
               <TrendingUp className="w-4 h-4 text-cyan-400" />
               <p className="text-cyan-400 text-sm">Estrategia actual</p>
             </div>
-            <p className="text-white capitalize">{recommendationData.strategy}</p>
+            <p className="text-white capitalize">
+              {recommendationData?.strategy ?? selectedStrategy}
+            </p>
           </div>
 
           <div className="p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
@@ -161,7 +286,9 @@ export default function SmartRecommendation() {
               <CheckCircle className="w-4 h-4 text-purple-400" />
               <p className="text-purple-400 text-sm">Integrantes evaluados</p>
             </div>
-            <p className="text-white">{recommendationData.recommendations.length} recomendados</p>
+            <p className="text-white">
+              {recommendationData?.recommendations.length ?? 0} recomendados
+            </p>
           </div>
 
           <div className="p-4 bg-green-500/5 border border-green-500/20 rounded-lg">
@@ -177,15 +304,12 @@ export default function SmartRecommendation() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl text-white">Top 3 integrantes recomendados</h2>
-          <button
-            onClick={() => navigate(`/task/${taskId}`)}
-            className="text-sm text-slate-400 hover:text-slate-300 transition-colors"
-          >
-            Volver a la tarea
-          </button>
+          {reloadingRecommendations && (
+            <span className="text-sm text-slate-400">Actualizando recomendaciones...</span>
+          )}
         </div>
 
-        {recommendationData.recommendations.map((rec, index) => (
+        {recommendationData?.recommendations.map((rec, index) => (
           <div
             key={rec.member.id}
             className={`bg-slate-900 border rounded-xl p-6 transition-all ${
@@ -221,7 +345,9 @@ export default function SmartRecommendation() {
                       </span>
                     )}
                   </div>
-                  <p className="text-slate-400 text-sm">{rec.member.role_name}</p>
+                  <p className="text-slate-400 text-sm">
+                    {roleLabels[rec.member.role_name] ?? rec.member.role_name}
+                  </p>
                 </div>
               </div>
 
@@ -267,34 +393,34 @@ export default function SmartRecommendation() {
               </div>
             </div>
 
-            {rec.matching_skills.length > 0 && (
-              <div className="mb-4">
-                <p className="text-slate-400 text-xs mb-2">Habilidades coincidentes</p>
-                <div className="flex flex-wrap gap-2">
-                  {rec.matching_skills.map((skill, i) => (
-                    <span
-                      key={i}
-                      className="px-2 py-1 bg-green-500/10 text-green-400 rounded text-xs border border-green-500/20"
-                    >
-                      ✓ {skill}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+            <div className="flex gap-3 flex-wrap">
+              <button
+                onClick={() => handleAssign(rec)}
+                disabled={assigningMemberId === rec.member.id}
+                className={`flex-1 py-3 rounded-lg transition-all ${
+                  index === 0
+                    ? "bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 shadow-lg shadow-cyan-500/20"
+                    : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
+                } disabled:opacity-60 disabled:cursor-not-allowed`}
+              >
+                {assigningMemberId === rec.member.id
+                  ? "Asignando..."
+                  : `Asignar a ${rec.member.full_name.split(" ")[0]}`}
+              </button>
 
-            <button
-              onClick={() => navigate(`/member/${rec.member.id}`)}
-              className={`w-full py-3 rounded-lg transition-all ${
-                index === 0
-                  ? "bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 shadow-lg shadow-cyan-500/20"
-                  : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
-              }`}
-            >
-              Ver perfil de {rec.member.full_name.split(" ")[0]}
-            </button>
+              <button
+                onClick={() => navigate(`/member/${rec.member.id}`)}
+                className="px-4 py-3 bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 rounded-lg transition-all"
+              >
+                Ver perfil
+              </button>
+            </div>
           </div>
-        ))}
+        )) ?? (
+          <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
+            No hay recomendaciones disponibles.
+          </div>
+        )}
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -303,10 +429,9 @@ export default function SmartRecommendation() {
           <div>
             <h3 className="text-white mb-2">Sobre esta recomendación</h3>
             <p className="text-slate-400 text-sm">
-              Esta primera versión utiliza una lógica de recomendación basada en datos reales del sistema:
-              carga actual, disponibilidad, cumplimiento histórico, cantidad de tareas activas,
-              prioridad y complejidad. En una siguiente fase se incorporarán habilidades, simulación
-              de escenarios, trazabilidad de decisiones y alertas de desbalance.
+              Esta versión permite elegir distintas estrategias de asignación para priorizar equilibrio,
+              eficiencia, urgencia o aprendizaje. En siguientes fases se incorporarán habilidades reales,
+              simulación de escenarios, trazabilidad más rica y alertas de desbalance.
             </p>
           </div>
         </div>

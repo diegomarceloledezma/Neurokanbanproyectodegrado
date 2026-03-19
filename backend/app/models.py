@@ -86,3 +86,18 @@ class Task(Base):
     project = relationship("Project", back_populates="tasks")
     assignee = relationship("User", back_populates="assigned_tasks", foreign_keys=[assigned_to])
     creator = relationship("User", back_populates="created_tasks", foreign_keys=[created_by])
+
+
+class TaskAssignmentHistory(Base):
+    __tablename__ = "task_assignment_history"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    assigned_to = Column(BigInteger, ForeignKey("users.id"), nullable=False)
+    assigned_by = Column(BigInteger, ForeignKey("users.id"))
+    source = Column(String(30), nullable=False, default="manual")
+    strategy = Column(String(30))
+    recommendation_score = Column(Numeric(5, 2))
+    risk_level = Column(String(20))
+    reason = Column(Text)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())

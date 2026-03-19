@@ -27,14 +27,18 @@ export type TaskRecommendationResponse = {
 
 export async function getTaskRecommendations(
   taskId: string,
-  token: string
+  token: string,
+  strategy = "balance"
 ): Promise<TaskRecommendationResponse> {
-  const response = await fetch(`${API_BASE_URL}/recommendations/tasks/${taskId}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const response = await fetch(
+    `${API_BASE_URL}/recommendations/tasks/${taskId}?strategy=${encodeURIComponent(strategy)}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);

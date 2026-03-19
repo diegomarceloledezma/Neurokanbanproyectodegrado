@@ -103,6 +103,31 @@ class TaskCreate(BaseModel):
     assigned_to: Optional[int] = None
 
 
+class TaskAssignRequest(BaseModel):
+    assigned_to: int
+    assigned_by: Optional[int] = None
+    source: str = "manual"
+    strategy: Optional[str] = None
+    recommendation_score: Optional[float] = None
+    risk_level: Optional[str] = None
+    reason: Optional[str] = None
+
+
+class AssignmentHistoryItem(BaseModel):
+    id: int
+    task_id: int
+    assigned_to: int
+    assigned_by: Optional[int] = None
+    source: str
+    strategy: Optional[str] = None
+    recommendation_score: Optional[float] = None
+    risk_level: Optional[str] = None
+    reason: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MemberTaskItem(BaseModel):
     id: int
     title: str

@@ -7,6 +7,8 @@ from app.schemas import (
     TaskRecommendationResponse,
     TaskRecommendationItem,
     RecommendationMember,
+    TaskSimulationItem,
+    TaskSimulationResponse,
 )
 
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
@@ -43,9 +45,56 @@ def calculate_member_metrics(db: Session, member_id: int):
         "active_tasks": active_count,
         "completed_tasks": completed_count,
         "completion_rate": completion_rate,
+        "total_active_hours": round(total_active_hours, 2),
         "current_load": current_load,
         "availability": availability,
     }
+
+
+def project_member_metrics(task: Task, metrics: dict):
+    estimated_hours_impact = float(task.estimated_hours or 0)
+    projected_total_active_hours = metrics["total_active_hours"] + estimated_hours_impact
+    projected_load = round(min((projected_total_active_hours / 40) * 100, 100), 2)
+    projected_availability = round(max(100 - projected_load, 0), 2)
+
+    projected_metrics = {
+        **metrics,
+        "active_tasks": metrics["active_tasks"] + 1,
+        "total_active_hours": round(projected_total_active_hours, 2),
+        "current_load": projected_load,
+        "availability": projected_availability,
+    }
+
+    return projected_metrics
+
+
+def build_recommendation_member(member: User):
+    role_name = member.global_role.name if member.global_role else "member"
+
+    return RecommendationMember(
+        id=member.id,
+        full_name=member.full_name,
+        email=member.email,
+        role_name=role_name,
+    )
+
+
+def get_eligible_members(db: Session):
+    members = (
+        db.query(User)
+        .options(joinedload(User.global_role))
+        .filter(User.is_active == True)
+        .all()
+    )
+
+    eligible_members = []
+    for member in members:
+        role_name = member.global_role.name if member.global_role else "member"
+        if role_name == "admin":
+            continue
+        eligible_members.append(member)
+
+    return eligible_members
 
 
 def calculate_score(task: Task, metrics: dict, strategy: str):
@@ -168,12 +217,7 @@ def get_task_recommendations(
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
-    members = (
-        db.query(User)
-        .options(joinedload(User.global_role))
-        .filter(User.is_active == True)
-        .all()
-    )
+    members = get_eligible_members(db)
 
     if not members:
         raise HTTPException(status_code=404, detail="No hay integrantes disponibles para recomendar")
@@ -181,10 +225,6 @@ def get_task_recommendations(
     recommendations = []
 
     for member in members:
-        role_name = member.global_role.name if member.global_role else "member"
-        if role_name == "admin":
-            continue
-
         metrics = calculate_member_metrics(db, member.id)
         score = calculate_score(task, metrics, strategy)
         risk_level = calculate_risk(task, metrics, strategy)
@@ -192,12 +232,7 @@ def get_task_recommendations(
 
         recommendations.append(
             TaskRecommendationItem(
-                member=RecommendationMember(
-                    id=member.id,
-                    full_name=member.full_name,
-                    email=member.email,
-                    role_name=role_name,
-                ),
+                member=build_recommendation_member(member),
                 score=score,
                 reason=reason,
                 availability=f"{metrics['availability']}%",
@@ -215,4 +250,83 @@ def get_task_recommendations(
         task_title=task.title,
         strategy=strategy,
         recommendations=recommendations[:3],
+    )
+
+
+@router.get("/tasks/{task_id}/simulation", response_model=TaskSimulationResponse)
+def get_task_simulation(
+    task_id: int,
+    strategy: str = Query(default="balance"),
+    db: Session = Depends(get_db),
+):
+    allowed_strategies = {"balance", "efficiency", "urgency", "learning"}
+    if strategy not in allowed_strategies:
+        raise HTTPException(status_code=400, detail="Estrategia no válida")
+
+    task = (
+        db.query(Task)
+        .options(joinedload(Task.assignee), joinedload(Task.creator))
+        .filter(Task.id == task_id)
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    members = get_eligible_members(db)
+
+    if not members:
+        raise HTTPException(status_code=404, detail="No hay integrantes disponibles para simular")
+
+    simulations = []
+
+    for member in members:
+        current_metrics = calculate_member_metrics(db, member.id)
+        projected_metrics = project_member_metrics(task, current_metrics)
+        score = calculate_score(task, projected_metrics, strategy)
+        risk_level = calculate_risk(task, projected_metrics, strategy)
+        reason = build_reason(task, projected_metrics, strategy)
+
+        simulations.append(
+            TaskSimulationItem(
+                rank=0,
+                member=build_recommendation_member(member),
+                score=score,
+                risk_level=risk_level,
+                reason=reason,
+                current_load=current_metrics["current_load"],
+                projected_load=projected_metrics["current_load"],
+                current_availability=current_metrics["availability"],
+                projected_availability=projected_metrics["availability"],
+                current_active_tasks=current_metrics["active_tasks"],
+                projected_active_tasks=projected_metrics["active_tasks"],
+                estimated_hours_impact=float(task.estimated_hours or 0),
+            )
+        )
+
+    simulations.sort(key=lambda item: item.score, reverse=True)
+
+    ranked_simulations = [
+        TaskSimulationItem(
+            rank=index,
+            member=item.member,
+            score=item.score,
+            risk_level=item.risk_level,
+            reason=item.reason,
+            current_load=item.current_load,
+            projected_load=item.projected_load,
+            current_availability=item.current_availability,
+            projected_availability=item.projected_availability,
+            current_active_tasks=item.current_active_tasks,
+            projected_active_tasks=item.projected_active_tasks,
+            estimated_hours_impact=item.estimated_hours_impact,
+        )
+        for index, item in enumerate(simulations[:3], start=1)
+    ]
+
+    return TaskSimulationResponse(
+        task_id=task.id,
+        task_title=task.title,
+        strategy=strategy,
+        simulations=ranked_simulations,
     )

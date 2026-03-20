@@ -183,3 +183,25 @@ class TaskRecommendationResponse(BaseModel):
     task_title: str
     strategy: str
     recommendations: list[TaskRecommendationItem]
+
+
+class TaskSimulationItem(BaseModel):
+    rank: int
+    member: RecommendationMember
+    score: float
+    risk_level: str
+    reason: str
+    current_load: float
+    projected_load: float
+    current_availability: float
+    projected_availability: float
+    current_active_tasks: int
+    projected_active_tasks: int
+    estimated_hours_impact: float
+
+
+class TaskSimulationResponse(BaseModel):
+    task_id: int
+    task_title: str
+    strategy: str
+    simulations: list[TaskSimulationItem]

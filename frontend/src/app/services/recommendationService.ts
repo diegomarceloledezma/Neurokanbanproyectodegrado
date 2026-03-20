@@ -25,6 +25,28 @@ export type TaskRecommendationResponse = {
   recommendations: TaskRecommendationItem[];
 };
 
+export type TaskSimulationItem = {
+  rank: number;
+  member: RecommendationMember;
+  score: number;
+  risk_level: "low" | "medium" | "high";
+  reason: string;
+  current_load: number;
+  projected_load: number;
+  current_availability: number;
+  projected_availability: number;
+  current_active_tasks: number;
+  projected_active_tasks: number;
+  estimated_hours_impact: number;
+};
+
+export type TaskSimulationResponse = {
+  task_id: number;
+  task_title: string;
+  strategy: string;
+  simulations: TaskSimulationItem[];
+};
+
 export async function getTaskRecommendations(
   taskId: string,
   token: string,
@@ -43,6 +65,31 @@ export async function getTaskRecommendations(
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
     throw new Error(errorData?.detail || "No se pudieron obtener las recomendaciones");
+  }
+
+  return response.json();
+}
+
+export async function getTaskSimulation(
+  taskId: string,
+  token: string,
+  strategy = "balance"
+): Promise<TaskSimulationResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/recommendations/tasks/${taskId}/simulation?strategy=${encodeURIComponent(
+      strategy
+    )}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.detail || "No se pudo obtener la simulación");
   }
 
   return response.json();

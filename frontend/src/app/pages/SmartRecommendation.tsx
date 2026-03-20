@@ -4,8 +4,11 @@ import { Sparkles, TrendingUp, AlertTriangle, CheckCircle, User } from "lucide-r
 import { getTaskById, assignTask, type TaskResponse } from "../services/taskService";
 import {
   getTaskRecommendations,
+  getTaskSimulation,
   type TaskRecommendationResponse,
   type TaskRecommendationItem,
+  type TaskSimulationResponse,
+  type TaskSimulationItem,
 } from "../services/recommendationService";
 import { getAccessToken, getStoredUser } from "../services/sessionService";
 
@@ -23,6 +26,7 @@ export default function SmartRecommendation() {
   const [task, setTask] = useState<TaskResponse | null>(null);
   const [recommendationData, setRecommendationData] =
     useState<TaskRecommendationResponse | null>(null);
+  const [simulationData, setSimulationData] = useState<TaskSimulationResponse | null>(null);
   const [selectedStrategy, setSelectedStrategy] = useState("balance");
   const [loading, setLoading] = useState(true);
   const [reloadingRecommendations, setReloadingRecommendations] = useState(false);
@@ -59,7 +63,7 @@ export default function SmartRecommendation() {
   }, [taskId, navigate]);
 
   useEffect(() => {
-    const loadRecommendations = async () => {
+    const loadAnalysis = async () => {
       if (!taskId) return;
 
       const token = getAccessToken();
@@ -70,17 +74,24 @@ export default function SmartRecommendation() {
 
       try {
         setReloadingRecommendations(true);
-        const recommendations = await getTaskRecommendations(taskId, token, selectedStrategy);
+        setError("");
+
+        const [recommendations, simulation] = await Promise.all([
+          getTaskRecommendations(taskId, token, selectedStrategy),
+          getTaskSimulation(taskId, token, selectedStrategy),
+        ]);
+
         setRecommendationData(recommendations);
+        setSimulationData(simulation);
       } catch (err) {
         if (err instanceof Error) setError(err.message);
-        else setError("Ocurrió un error al cargar la recomendación");
+        else setError("Ocurrió un error al cargar el análisis inteligente");
       } finally {
         setReloadingRecommendations(false);
       }
     };
 
-    loadRecommendations();
+    loadAnalysis();
   }, [taskId, selectedStrategy, navigate]);
 
   const handleAssign = async (rec: TaskRecommendationItem) => {
@@ -146,6 +157,13 @@ export default function SmartRecommendation() {
     admin: "Administrador",
   };
 
+  const strategyLabels: Record<string, string> = {
+    balance: "Balance",
+    efficiency: "Eficiencia",
+    urgency: "Urgencia",
+    learning: "Aprendizaje",
+  };
+
   const strategyDescriptions: Record<string, string> = {
     balance: "Busca equilibrio entre carga, disponibilidad y desempeño.",
     efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
@@ -159,6 +177,22 @@ export default function SmartRecommendation() {
     const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
     if (days < 0) return "Fecha vencida";
     return `${days} días restantes`;
+  };
+
+  const formatPercent = (value: number) => `${value}%`;
+
+  const getLoadChangeLabel = (simulation: TaskSimulationItem) => {
+    const change = simulation.projected_load - simulation.current_load;
+    if (change > 0) return `+${change}%`;
+    if (change < 0) return `${change}%`;
+    return "Sin cambio";
+  };
+
+  const getActiveTasksChangeLabel = (simulation: TaskSimulationItem) => {
+    const change = simulation.projected_active_tasks - simulation.current_active_tasks;
+    if (change > 0) return `+${change} tarea${change > 1 ? "s" : ""}`;
+    if (change < 0) return `${change} tarea${Math.abs(change) > 1 ? "s" : ""}`;
+    return "Sin cambio";
   };
 
   if (loading) {
@@ -270,24 +304,35 @@ export default function SmartRecommendation() {
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <h2 className="text-xl text-white mb-4">Resumen del análisis</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
               <TrendingUp className="w-4 h-4 text-cyan-400" />
               <p className="text-cyan-400 text-sm">Estrategia actual</p>
             </div>
-            <p className="text-white capitalize">
-              {recommendationData?.strategy ?? selectedStrategy}
+            <p className="text-white">
+              {strategyLabels[recommendationData?.strategy ?? selectedStrategy] ??
+                (recommendationData?.strategy ?? selectedStrategy)}
             </p>
           </div>
 
           <div className="p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
             <div className="flex items-center gap-2 mb-2">
               <CheckCircle className="w-4 h-4 text-purple-400" />
-              <p className="text-purple-400 text-sm">Integrantes evaluados</p>
+              <p className="text-purple-400 text-sm">Recomendados</p>
             </div>
             <p className="text-white">
-              {recommendationData?.recommendations.length ?? 0} recomendados
+              {recommendationData?.recommendations.length ?? 0} integrantes
+            </p>
+          </div>
+
+          <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-4 h-4 text-emerald-400" />
+              <p className="text-emerald-400 text-sm">Simulación</p>
+            </div>
+            <p className="text-white">
+              {simulationData?.simulations.length ?? 0} escenarios
             </p>
           </div>
 
@@ -305,7 +350,7 @@ export default function SmartRecommendation() {
         <div className="flex items-center justify-between">
           <h2 className="text-xl text-white">Top 3 integrantes recomendados</h2>
           {reloadingRecommendations && (
-            <span className="text-sm text-slate-400">Actualizando recomendaciones...</span>
+            <span className="text-sm text-slate-400">Actualizando análisis...</span>
           )}
         </div>
 
@@ -341,7 +386,7 @@ export default function SmartRecommendation() {
                     <h3 className="text-xl text-white">{rec.member.full_name}</h3>
                     {index === 0 && (
                       <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 text-xs rounded border border-cyan-500/30">
-                        MEJOR MATCH
+                        MEJOR COINCIDENCIA
                       </span>
                     )}
                   </div>
@@ -357,7 +402,7 @@ export default function SmartRecommendation() {
                     {rec.score}%
                   </div>
                 </div>
-                <p className="text-slate-400 text-sm">Score de compatibilidad</p>
+                <p className="text-slate-400 text-sm">Puntaje de compatibilidad</p>
               </div>
             </div>
 
@@ -424,14 +469,132 @@ export default function SmartRecommendation() {
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+          <div>
+            <h2 className="text-xl text-white">Simulación antes de asignar</h2>
+            <p className="text-slate-400 text-sm">
+              Compara cómo cambiaría la carga de trabajo antes de confirmar una asignación.
+            </p>
+          </div>
+          {simulationData && (
+            <span className="text-sm text-slate-400">
+              Estrategia aplicada:{" "}
+              <span className="text-white">
+                {strategyLabels[simulationData.strategy] ?? simulationData.strategy}
+              </span>
+            </span>
+          )}
+        </div>
+
+        <div className="space-y-4">
+          {simulationData?.simulations.map((simulation, index) => (
+            <div
+              key={simulation.member.id}
+              className={`rounded-xl border p-5 ${
+                index === 0
+                  ? "border-cyan-500/40 bg-cyan-500/5"
+                  : "border-slate-800 bg-slate-800/30"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+                <div>
+                  <div className="flex items-center gap-3 flex-wrap mb-1">
+                    <h3 className="text-white text-lg">
+                      #{simulation.rank} {simulation.member.full_name}
+                    </h3>
+                    {simulation.rank === 1 && (
+                      <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 text-xs rounded border border-cyan-500/30">
+                        ESCENARIO RECOMENDADO
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-slate-400 text-sm">
+                    {roleLabels[simulation.member.role_name] ?? simulation.member.role_name}
+                  </p>
+                </div>
+
+                <div className="text-right">
+                  <p className="text-slate-400 text-sm">Puntaje simulado</p>
+                  <p className="text-2xl text-white">{simulation.score}%</p>
+                </div>
+              </div>
+
+              <div className="mb-4 p-4 bg-slate-900/50 rounded-lg">
+                <p className="text-slate-300 text-sm">{simulation.reason}</p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Carga actual</p>
+                  <p className="text-white">{formatPercent(simulation.current_load)}</p>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Carga proyectada</p>
+                  <p className="text-white">{formatPercent(simulation.projected_load)}</p>
+                  <p className="text-cyan-300 text-xs mt-1">
+                    Impacto: {getLoadChangeLabel(simulation)}
+                  </p>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Disponibilidad actual</p>
+                  <p className="text-white">{formatPercent(simulation.current_availability)}</p>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Disponibilidad proyectada</p>
+                  <p className="text-white">{formatPercent(simulation.projected_availability)}</p>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Tareas activas actuales</p>
+                  <p className="text-white">{simulation.current_active_tasks}</p>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Tareas activas proyectadas</p>
+                  <p className="text-white">{simulation.projected_active_tasks}</p>
+                  <p className="text-cyan-300 text-xs mt-1">
+                    Impacto: {getActiveTasksChangeLabel(simulation)}
+                  </p>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Riesgo simulado</p>
+                  <span
+                    className={`inline-block text-sm px-2 py-1 rounded border ${
+                      riskColors[simulation.risk_level]
+                    }`}
+                  >
+                    {riskLabels[simulation.risk_level]}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-900/40 rounded-lg">
+                  <p className="text-slate-400 text-xs mb-1">Impacto estimado de horas</p>
+                  <p className="text-white">{simulation.estimated_hours_impact}h</p>
+                </div>
+              </div>
+            </div>
+          )) ?? (
+            <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
+              No hay simulaciones disponibles.
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <div className="flex items-start gap-3">
           <User className="w-5 h-5 text-cyan-400 mt-1" />
           <div>
             <h3 className="text-white mb-2">Sobre esta recomendación</h3>
             <p className="text-slate-400 text-sm">
-              Esta versión permite elegir distintas estrategias de asignación para priorizar equilibrio,
-              eficiencia, urgencia o aprendizaje. En siguientes fases se incorporarán habilidades reales,
-              simulación de escenarios, trazabilidad más rica y alertas de desbalance.
+              Esta versión ya permite elegir distintas estrategias de asignación y comparar el
+              impacto simulado antes de decidir. En siguientes fases se incorporarán habilidades
+              reales, mayor trazabilidad analítica, alertas de desbalance y una evolución más fuerte
+              del componente de inteligencia.
             </p>
           </div>
         </div>

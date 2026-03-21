@@ -205,3 +205,15 @@ class TaskSimulationResponse(BaseModel):
     task_title: str
     strategy: str
     simulations: list[TaskSimulationItem]
+
+
+class TaskInsightResponse(BaseModel):
+    task_id: int
+    task_title: str
+    suggested_strategy: str
+    suggested_strategy_label: str
+    suggested_area: str
+    suggested_skills: list[str]
+    confidence_level: str
+    detected_signals: list[str]
+    explanation: str

@@ -1,14 +1,25 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Sparkles, TrendingUp, AlertTriangle, CheckCircle, User } from "lucide-react";
+import {
+  Sparkles,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle,
+  User,
+  Brain,
+  Lightbulb,
+  Layers3,
+} from "lucide-react";
 import { getTaskById, assignTask, type TaskResponse } from "../services/taskService";
 import {
   getTaskRecommendations,
   getTaskSimulation,
+  getTaskInsights,
   type TaskRecommendationResponse,
   type TaskRecommendationItem,
   type TaskSimulationResponse,
   type TaskSimulationItem,
+  type TaskInsightResponse,
 } from "../services/recommendationService";
 import { getAccessToken, getStoredUser } from "../services/sessionService";
 
@@ -27,9 +38,10 @@ export default function SmartRecommendation() {
   const [recommendationData, setRecommendationData] =
     useState<TaskRecommendationResponse | null>(null);
   const [simulationData, setSimulationData] = useState<TaskSimulationResponse | null>(null);
+  const [insightData, setInsightData] = useState<TaskInsightResponse | null>(null);
   const [selectedStrategy, setSelectedStrategy] = useState("balance");
   const [loading, setLoading] = useState(true);
-  const [reloadingRecommendations, setReloadingRecommendations] = useState(false);
+  const [reloadingAnalysis, setReloadingAnalysis] = useState(false);
   const [assigningMemberId, setAssigningMemberId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
@@ -73,21 +85,23 @@ export default function SmartRecommendation() {
       }
 
       try {
-        setReloadingRecommendations(true);
+        setReloadingAnalysis(true);
         setError("");
 
-        const [recommendations, simulation] = await Promise.all([
+        const [recommendations, simulation, insights] = await Promise.all([
           getTaskRecommendations(taskId, token, selectedStrategy),
           getTaskSimulation(taskId, token, selectedStrategy),
+          getTaskInsights(taskId, token),
         ]);
 
         setRecommendationData(recommendations);
         setSimulationData(simulation);
+        setInsightData(insights);
       } catch (err) {
         if (err instanceof Error) setError(err.message);
         else setError("Ocurrió un error al cargar el análisis inteligente");
       } finally {
-        setReloadingRecommendations(false);
+        setReloadingAnalysis(false);
       }
     };
 
@@ -132,6 +146,11 @@ export default function SmartRecommendation() {
     }
   };
 
+  const handleApplySuggestedStrategy = () => {
+    if (!insightData) return;
+    setSelectedStrategy(insightData.suggested_strategy);
+  };
+
   const riskColors: Record<string, string> = {
     low: "text-green-400 bg-green-500/10 border-green-500/20",
     medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
@@ -169,6 +188,12 @@ export default function SmartRecommendation() {
     efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
     urgency: "Favorece rapidez de respuesta y menor saturación.",
     learning: "Promueve desarrollo del equipo con riesgo controlado.",
+  };
+
+  const confidenceStyles: Record<string, string> = {
+    alta: "text-green-300 bg-green-500/10 border-green-500/20",
+    media: "text-yellow-300 bg-yellow-500/10 border-yellow-500/20",
+    baja: "text-red-300 bg-red-500/10 border-red-500/20",
   };
 
   const daysRemaining = (dueDate?: string | null) => {
@@ -270,6 +295,104 @@ export default function SmartRecommendation() {
         </div>
       </div>
 
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Brain className="w-5 h-5 text-cyan-400" />
+          <div>
+            <h2 className="text-xl text-white">Asistente inteligente de la tarea</h2>
+            <p className="text-slate-400 text-sm">
+              Interpreta la tarea y sugiere un enfoque de asignación antes de decidir.
+            </p>
+          </div>
+        </div>
+
+        {insightData ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb className="w-4 h-4 text-cyan-400" />
+                  <p className="text-cyan-400 text-sm">Estrategia sugerida</p>
+                </div>
+                <p className="text-white">{insightData.suggested_strategy_label}</p>
+              </div>
+
+              <div className="p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Layers3 className="w-4 h-4 text-purple-400" />
+                  <p className="text-purple-400 text-sm">Área sugerida</p>
+                </div>
+                <p className="text-white">{insightData.suggested_area}</p>
+              </div>
+
+              <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  <p className="text-emerald-400 text-sm">Confianza</p>
+                </div>
+                <span
+                  className={`inline-block px-2 py-1 text-sm rounded border ${
+                    confidenceStyles[insightData.confidence_level] ??
+                    "text-slate-300 bg-slate-800 border-slate-700"
+                  }`}
+                >
+                  {insightData.confidence_level}
+                </span>
+              </div>
+
+              <div className="p-4 bg-slate-800/40 border border-slate-700 rounded-lg">
+                <p className="text-slate-400 text-sm mb-2">Acción recomendada</p>
+                <button
+                  onClick={handleApplySuggestedStrategy}
+                  disabled={selectedStrategy === insightData.suggested_strategy}
+                  className="w-full px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+                >
+                  {selectedStrategy === insightData.suggested_strategy
+                    ? "Estrategia ya aplicada"
+                    : `Usar ${insightData.suggested_strategy_label}`}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-800/50 rounded-lg">
+              <p className="text-slate-300 text-sm">{insightData.explanation}</p>
+            </div>
+
+            <div>
+              <h3 className="text-white mb-3">Habilidades sugeridas</h3>
+              <div className="flex flex-wrap gap-2">
+                {insightData.suggested_skills.map((skill) => (
+                  <span
+                    key={skill}
+                    className="px-3 py-1 rounded-full text-sm bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"
+                  >
+                    {skill}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <h3 className="text-white mb-3">Señales detectadas</h3>
+              <ul className="space-y-2">
+                {insightData.detected_signals.map((signal, index) => (
+                  <li
+                    key={`${signal}-${index}`}
+                    className="text-slate-300 text-sm bg-slate-800/40 rounded-lg px-4 py-3"
+                  >
+                    {signal}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
+            No se pudo cargar el asistente inteligente.
+          </div>
+        )}
+      </div>
+
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-end gap-4 md:justify-between">
           <div>
@@ -349,7 +472,7 @@ export default function SmartRecommendation() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-xl text-white">Top 3 integrantes recomendados</h2>
-          {reloadingRecommendations && (
+          {reloadingAnalysis && (
             <span className="text-sm text-slate-400">Actualizando análisis...</span>
           )}
         </div>
@@ -591,10 +714,10 @@ export default function SmartRecommendation() {
           <div>
             <h3 className="text-white mb-2">Sobre esta recomendación</h3>
             <p className="text-slate-400 text-sm">
-              Esta versión ya permite elegir distintas estrategias de asignación y comparar el
-              impacto simulado antes de decidir. En siguientes fases se incorporarán habilidades
-              reales, mayor trazabilidad analítica, alertas de desbalance y una evolución más fuerte
-              del componente de inteligencia.
+              Esta versión ya permite interpretar la tarea, sugerir una estrategia de asignación,
+              comparar escenarios antes de decidir y registrar la asignación real con trazabilidad.
+              En siguientes fases se incorporarán habilidades reales, alertas de desbalance y una
+              evolución más fuerte del componente de inteligencia.
             </p>
           </div>
         </div>

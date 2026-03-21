@@ -47,6 +47,18 @@ export type TaskSimulationResponse = {
   simulations: TaskSimulationItem[];
 };
 
+export type TaskInsightResponse = {
+  task_id: number;
+  task_title: string;
+  suggested_strategy: "balance" | "efficiency" | "urgency" | "learning";
+  suggested_strategy_label: string;
+  suggested_area: string;
+  suggested_skills: string[];
+  confidence_level: "alta" | "media" | "baja";
+  detected_signals: string[];
+  explanation: string;
+};
+
 export async function getTaskRecommendations(
   taskId: string,
   token: string,
@@ -90,6 +102,25 @@ export async function getTaskSimulation(
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
     throw new Error(errorData?.detail || "No se pudo obtener la simulación");
+  }
+
+  return response.json();
+}
+
+export async function getTaskInsights(
+  taskId: string,
+  token: string
+): Promise<TaskInsightResponse> {
+  const response = await fetch(`${API_BASE_URL}/recommendations/tasks/${taskId}/insights`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => null);
+    throw new Error(errorData?.detail || "No se pudo obtener el análisis inteligente");
   }
 
   return response.json();

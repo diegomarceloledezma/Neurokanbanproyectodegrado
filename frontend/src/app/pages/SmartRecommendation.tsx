@@ -1,27 +1,22 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router";
-import {
-  Sparkles,
-  TrendingUp,
-  AlertTriangle,
-  CheckCircle,
-  User,
-  Brain,
-  Lightbulb,
-  Layers3,
-} from "lucide-react";
+import { useNavigate, useParams } from "react-router";
+import { Sparkles, User } from "lucide-react";
 import { getTaskById, assignTask, type TaskResponse } from "../services/taskService";
 import {
+  getTaskInsights,
   getTaskRecommendations,
   getTaskSimulation,
-  getTaskInsights,
-  type TaskRecommendationResponse,
-  type TaskRecommendationItem,
-  type TaskSimulationResponse,
-  type TaskSimulationItem,
   type TaskInsightResponse,
+  type TaskRecommendationItem,
+  type TaskRecommendationResponse,
+  type TaskSimulationItem,
+  type TaskSimulationResponse,
 } from "../services/recommendationService";
 import { getAccessToken, getStoredUser } from "../services/sessionService";
+import TaskInsightsPanel from "../components/recommendation/TaskInsightsPanel";
+import AnalysisSummary from "../components/recommendation/AnalysisSummary";
+import RecommendationCard from "../components/recommendation/RecommendationCard";
+import SimulationCard from "../components/recommendation/SimulationCard";
 
 const strategyOptions = [
   { value: "balance", label: "Balance" },
@@ -29,6 +24,71 @@ const strategyOptions = [
   { value: "urgency", label: "Urgencia" },
   { value: "learning", label: "Aprendizaje" },
 ];
+
+const riskColors: Record<string, string> = {
+  low: "text-green-400 bg-green-500/10 border-green-500/20",
+  medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
+  high: "text-red-400 bg-red-500/10 border-red-500/20",
+};
+
+const riskLabels: Record<string, string> = {
+  low: "Riesgo bajo",
+  medium: "Riesgo medio",
+  high: "Riesgo alto",
+};
+
+const priorityLabels: Record<string, string> = {
+  low: "Baja",
+  medium: "Media",
+  high: "Alta",
+  critical: "Crítica",
+};
+
+const roleLabels: Record<string, string> = {
+  leader: "Líder de equipo",
+  member: "Integrante del equipo",
+  admin: "Administrador",
+};
+
+const strategyLabels: Record<string, string> = {
+  balance: "Balance",
+  efficiency: "Eficiencia",
+  urgency: "Urgencia",
+  learning: "Aprendizaje",
+};
+
+const strategyDescriptions: Record<string, string> = {
+  balance: "Busca equilibrio entre carga, disponibilidad y desempeño.",
+  efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
+  urgency: "Favorece rapidez de respuesta y menor saturación.",
+  learning: "Promueve desarrollo del equipo con riesgo controlado.",
+};
+
+function daysRemaining(dueDate?: string | null) {
+  if (!dueDate) return "Sin fecha límite";
+  const diff = new Date(dueDate).getTime() - new Date().getTime();
+  const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
+  if (days < 0) return "Fecha vencida";
+  return `${days} días restantes`;
+}
+
+function formatPercent(value: number) {
+  return `${value}%`;
+}
+
+function getLoadChangeLabel(simulation: TaskSimulationItem) {
+  const change = simulation.projected_load - simulation.current_load;
+  if (change > 0) return `+${change}%`;
+  if (change < 0) return `${change}%`;
+  return "Sin cambio";
+}
+
+function getActiveTasksChangeLabel(simulation: TaskSimulationItem) {
+  const change = simulation.projected_active_tasks - simulation.current_active_tasks;
+  if (change > 0) return `+${change} tarea${change > 1 ? "s" : ""}`;
+  if (change < 0) return `${change} tarea${Math.abs(change) > 1 ? "s" : ""}`;
+  return "Sin cambio";
+}
 
 export default function SmartRecommendation() {
   const { taskId } = useParams();
@@ -151,75 +211,6 @@ export default function SmartRecommendation() {
     setSelectedStrategy(insightData.suggested_strategy);
   };
 
-  const riskColors: Record<string, string> = {
-    low: "text-green-400 bg-green-500/10 border-green-500/20",
-    medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
-    high: "text-red-400 bg-red-500/10 border-red-500/20",
-  };
-
-  const riskLabels: Record<string, string> = {
-    low: "Riesgo bajo",
-    medium: "Riesgo medio",
-    high: "Riesgo alto",
-  };
-
-  const priorityLabels: Record<string, string> = {
-    low: "Baja",
-    medium: "Media",
-    high: "Alta",
-    critical: "Crítica",
-  };
-
-  const roleLabels: Record<string, string> = {
-    leader: "Líder de equipo",
-    member: "Integrante del equipo",
-    admin: "Administrador",
-  };
-
-  const strategyLabels: Record<string, string> = {
-    balance: "Balance",
-    efficiency: "Eficiencia",
-    urgency: "Urgencia",
-    learning: "Aprendizaje",
-  };
-
-  const strategyDescriptions: Record<string, string> = {
-    balance: "Busca equilibrio entre carga, disponibilidad y desempeño.",
-    efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
-    urgency: "Favorece rapidez de respuesta y menor saturación.",
-    learning: "Promueve desarrollo del equipo con riesgo controlado.",
-  };
-
-  const confidenceStyles: Record<string, string> = {
-    alta: "text-green-300 bg-green-500/10 border-green-500/20",
-    media: "text-yellow-300 bg-yellow-500/10 border-yellow-500/20",
-    baja: "text-red-300 bg-red-500/10 border-red-500/20",
-  };
-
-  const daysRemaining = (dueDate?: string | null) => {
-    if (!dueDate) return "Sin fecha límite";
-    const diff = new Date(dueDate).getTime() - new Date().getTime();
-    const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-    if (days < 0) return "Fecha vencida";
-    return `${days} días restantes`;
-  };
-
-  const formatPercent = (value: number) => `${value}%`;
-
-  const getLoadChangeLabel = (simulation: TaskSimulationItem) => {
-    const change = simulation.projected_load - simulation.current_load;
-    if (change > 0) return `+${change}%`;
-    if (change < 0) return `${change}%`;
-    return "Sin cambio";
-  };
-
-  const getActiveTasksChangeLabel = (simulation: TaskSimulationItem) => {
-    const change = simulation.projected_active_tasks - simulation.current_active_tasks;
-    if (change > 0) return `+${change} tarea${change > 1 ? "s" : ""}`;
-    if (change < 0) return `${change} tarea${Math.abs(change) > 1 ? "s" : ""}`;
-    return "Sin cambio";
-  };
-
   if (loading) {
     return <div className="text-slate-300">Cargando recomendación...</div>;
   }
@@ -295,103 +286,11 @@ export default function SmartRecommendation() {
         </div>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Brain className="w-5 h-5 text-cyan-400" />
-          <div>
-            <h2 className="text-xl text-white">Asistente inteligente de la tarea</h2>
-            <p className="text-slate-400 text-sm">
-              Interpreta la tarea y sugiere un enfoque de asignación antes de decidir.
-            </p>
-          </div>
-        </div>
-
-        {insightData ? (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <Lightbulb className="w-4 h-4 text-cyan-400" />
-                  <p className="text-cyan-400 text-sm">Estrategia sugerida</p>
-                </div>
-                <p className="text-white">{insightData.suggested_strategy_label}</p>
-              </div>
-
-              <div className="p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <Layers3 className="w-4 h-4 text-purple-400" />
-                  <p className="text-purple-400 text-sm">Área sugerida</p>
-                </div>
-                <p className="text-white">{insightData.suggested_area}</p>
-              </div>
-
-              <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle className="w-4 h-4 text-emerald-400" />
-                  <p className="text-emerald-400 text-sm">Confianza</p>
-                </div>
-                <span
-                  className={`inline-block px-2 py-1 text-sm rounded border ${
-                    confidenceStyles[insightData.confidence_level] ??
-                    "text-slate-300 bg-slate-800 border-slate-700"
-                  }`}
-                >
-                  {insightData.confidence_level}
-                </span>
-              </div>
-
-              <div className="p-4 bg-slate-800/40 border border-slate-700 rounded-lg">
-                <p className="text-slate-400 text-sm mb-2">Acción recomendada</p>
-                <button
-                  onClick={handleApplySuggestedStrategy}
-                  disabled={selectedStrategy === insightData.suggested_strategy}
-                  className="w-full px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-                >
-                  {selectedStrategy === insightData.suggested_strategy
-                    ? "Estrategia ya aplicada"
-                    : `Usar ${insightData.suggested_strategy_label}`}
-                </button>
-              </div>
-            </div>
-
-            <div className="p-4 bg-slate-800/50 rounded-lg">
-              <p className="text-slate-300 text-sm">{insightData.explanation}</p>
-            </div>
-
-            <div>
-              <h3 className="text-white mb-3">Habilidades sugeridas</h3>
-              <div className="flex flex-wrap gap-2">
-                {insightData.suggested_skills.map((skill) => (
-                  <span
-                    key={skill}
-                    className="px-3 py-1 rounded-full text-sm bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"
-                  >
-                    {skill}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="text-white mb-3">Señales detectadas</h3>
-              <ul className="space-y-2">
-                {insightData.detected_signals.map((signal, index) => (
-                  <li
-                    key={`${signal}-${index}`}
-                    className="text-slate-300 text-sm bg-slate-800/40 rounded-lg px-4 py-3"
-                  >
-                    {signal}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
-            No se pudo cargar el asistente inteligente.
-          </div>
-        )}
-      </div>
+      <TaskInsightsPanel
+        insightData={insightData}
+        selectedStrategy={selectedStrategy}
+        onApplySuggestedStrategy={handleApplySuggestedStrategy}
+      />
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
         <div className="flex flex-col md:flex-row md:items-end gap-4 md:justify-between">
@@ -425,49 +324,15 @@ export default function SmartRecommendation() {
         </div>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h2 className="text-xl text-white mb-4">Resumen del análisis</h2>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
-            <div className="flex items-center gap-2 mb-2">
-              <TrendingUp className="w-4 h-4 text-cyan-400" />
-              <p className="text-cyan-400 text-sm">Estrategia actual</p>
-            </div>
-            <p className="text-white">
-              {strategyLabels[recommendationData?.strategy ?? selectedStrategy] ??
-                (recommendationData?.strategy ?? selectedStrategy)}
-            </p>
-          </div>
-
-          <div className="p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
-            <div className="flex items-center gap-2 mb-2">
-              <CheckCircle className="w-4 h-4 text-purple-400" />
-              <p className="text-purple-400 text-sm">Recomendados</p>
-            </div>
-            <p className="text-white">
-              {recommendationData?.recommendations.length ?? 0} integrantes
-            </p>
-          </div>
-
-          <div className="p-4 bg-emerald-500/5 border border-emerald-500/20 rounded-lg">
-            <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              <p className="text-emerald-400 text-sm">Simulación</p>
-            </div>
-            <p className="text-white">
-              {simulationData?.simulations.length ?? 0} escenarios
-            </p>
-          </div>
-
-          <div className="p-4 bg-green-500/5 border border-green-500/20 rounded-lg">
-            <div className="flex items-center gap-2 mb-2">
-              <AlertTriangle className="w-4 h-4 text-green-400" />
-              <p className="text-green-400 text-sm">Urgencia</p>
-            </div>
-            <p className="text-white">{daysRemaining(task.due_date)}</p>
-          </div>
-        </div>
-      </div>
+      <AnalysisSummary
+        currentStrategyLabel={
+          strategyLabels[recommendationData?.strategy ?? selectedStrategy] ??
+          (recommendationData?.strategy ?? selectedStrategy)
+        }
+        recommendationsCount={recommendationData?.recommendations.length ?? 0}
+        simulationsCount={simulationData?.simulations.length ?? 0}
+        urgencyLabel={daysRemaining(task.due_date)}
+      />
 
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -478,112 +343,17 @@ export default function SmartRecommendation() {
         </div>
 
         {recommendationData?.recommendations.map((rec, index) => (
-          <div
+          <RecommendationCard
             key={rec.member.id}
-            className={`bg-slate-900 border rounded-xl p-6 transition-all ${
-              index === 0
-                ? "border-cyan-500/50 shadow-lg shadow-cyan-500/10"
-                : "border-slate-800 hover:border-slate-700"
-            }`}
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex items-center gap-4">
-                <div className="relative">
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-xl">
-                    {rec.member.full_name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .slice(0, 2)
-                      .toUpperCase()}
-                  </div>
-                  {index === 0 && (
-                    <div className="absolute -top-1 -right-1 w-6 h-6 bg-cyan-500 rounded-full flex items-center justify-center">
-                      <Sparkles className="w-4 h-4 text-white" />
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <div className="flex items-center gap-3 mb-1 flex-wrap">
-                    <h3 className="text-xl text-white">{rec.member.full_name}</h3>
-                    {index === 0 && (
-                      <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 text-xs rounded border border-cyan-500/30">
-                        MEJOR COINCIDENCIA
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-400 text-sm">
-                    {roleLabels[rec.member.role_name] ?? rec.member.role_name}
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-right">
-                <div className="flex items-center justify-end gap-2 mb-1">
-                  <div className="text-4xl bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-                    {rec.score}%
-                  </div>
-                </div>
-                <p className="text-slate-400 text-sm">Puntaje de compatibilidad</p>
-              </div>
-            </div>
-
-            <div className="mb-4 p-4 bg-slate-800/50 rounded-lg">
-              <p className="text-slate-300 text-sm">{rec.reason}</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div className="p-3 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Disponibilidad</p>
-                <p className="text-white">{rec.availability}</p>
-              </div>
-
-              <div className="p-3 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Carga actual</p>
-                <p className="text-white">{rec.current_load}</p>
-              </div>
-
-              <div className="p-3 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Nivel de riesgo</p>
-                <span
-                  className={`inline-block text-sm px-2 py-1 rounded border ${
-                    riskColors[rec.risk_level]
-                  }`}
-                >
-                  {riskLabels[rec.risk_level]}
-                </span>
-              </div>
-
-              <div className="p-3 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Tareas activas</p>
-                <p className="text-white">{rec.active_tasks} tareas</p>
-              </div>
-            </div>
-
-            <div className="flex gap-3 flex-wrap">
-              <button
-                onClick={() => handleAssign(rec)}
-                disabled={assigningMemberId === rec.member.id}
-                className={`flex-1 py-3 rounded-lg transition-all ${
-                  index === 0
-                    ? "bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 shadow-lg shadow-cyan-500/20"
-                    : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
-                } disabled:opacity-60 disabled:cursor-not-allowed`}
-              >
-                {assigningMemberId === rec.member.id
-                  ? "Asignando..."
-                  : `Asignar a ${rec.member.full_name.split(" ")[0]}`}
-              </button>
-
-              <button
-                onClick={() => navigate(`/member/${rec.member.id}`)}
-                className="px-4 py-3 bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 rounded-lg transition-all"
-              >
-                Ver perfil
-              </button>
-            </div>
-          </div>
+            rec={rec}
+            index={index}
+            assigningMemberId={assigningMemberId}
+            onAssign={handleAssign}
+            onViewProfile={(memberId) => navigate(`/member/${memberId}`)}
+            roleLabels={roleLabels}
+            riskColors={riskColors}
+            riskLabels={riskLabels}
+          />
         )) ?? (
           <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
             No hay recomendaciones disponibles.
@@ -611,95 +381,17 @@ export default function SmartRecommendation() {
 
         <div className="space-y-4">
           {simulationData?.simulations.map((simulation, index) => (
-            <div
+            <SimulationCard
               key={simulation.member.id}
-              className={`rounded-xl border p-5 ${
-                index === 0
-                  ? "border-cyan-500/40 bg-cyan-500/5"
-                  : "border-slate-800 bg-slate-800/30"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
-                <div>
-                  <div className="flex items-center gap-3 flex-wrap mb-1">
-                    <h3 className="text-white text-lg">
-                      #{simulation.rank} {simulation.member.full_name}
-                    </h3>
-                    {simulation.rank === 1 && (
-                      <span className="px-2 py-1 bg-cyan-500/20 text-cyan-400 text-xs rounded border border-cyan-500/30">
-                        ESCENARIO RECOMENDADO
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-400 text-sm">
-                    {roleLabels[simulation.member.role_name] ?? simulation.member.role_name}
-                  </p>
-                </div>
-
-                <div className="text-right">
-                  <p className="text-slate-400 text-sm">Puntaje simulado</p>
-                  <p className="text-2xl text-white">{simulation.score}%</p>
-                </div>
-              </div>
-
-              <div className="mb-4 p-4 bg-slate-900/50 rounded-lg">
-                <p className="text-slate-300 text-sm">{simulation.reason}</p>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Carga actual</p>
-                  <p className="text-white">{formatPercent(simulation.current_load)}</p>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Carga proyectada</p>
-                  <p className="text-white">{formatPercent(simulation.projected_load)}</p>
-                  <p className="text-cyan-300 text-xs mt-1">
-                    Impacto: {getLoadChangeLabel(simulation)}
-                  </p>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Disponibilidad actual</p>
-                  <p className="text-white">{formatPercent(simulation.current_availability)}</p>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Disponibilidad proyectada</p>
-                  <p className="text-white">{formatPercent(simulation.projected_availability)}</p>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Tareas activas actuales</p>
-                  <p className="text-white">{simulation.current_active_tasks}</p>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Tareas activas proyectadas</p>
-                  <p className="text-white">{simulation.projected_active_tasks}</p>
-                  <p className="text-cyan-300 text-xs mt-1">
-                    Impacto: {getActiveTasksChangeLabel(simulation)}
-                  </p>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Riesgo simulado</p>
-                  <span
-                    className={`inline-block text-sm px-2 py-1 rounded border ${
-                      riskColors[simulation.risk_level]
-                    }`}
-                  >
-                    {riskLabels[simulation.risk_level]}
-                  </span>
-                </div>
-
-                <div className="p-3 bg-slate-900/40 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">Impacto estimado de horas</p>
-                  <p className="text-white">{simulation.estimated_hours_impact}h</p>
-                </div>
-              </div>
-            </div>
+              simulation={simulation}
+              index={index}
+              roleLabels={roleLabels}
+              riskColors={riskColors}
+              riskLabels={riskLabels}
+              formatPercent={formatPercent}
+              getLoadChangeLabel={getLoadChangeLabel}
+              getActiveTasksChangeLabel={getActiveTasksChangeLabel}
+            />
           )) ?? (
             <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
               No hay simulaciones disponibles.

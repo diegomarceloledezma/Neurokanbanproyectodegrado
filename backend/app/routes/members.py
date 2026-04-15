@@ -2,17 +2,24 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.models import User, Task
-from app.schemas import MemberProfileResponse, MemberTaskItem
+from app.models import ProjectMember, Task, User, UserSkill
+from app.schemas import MemberProfileResponse, MemberSkillItem, MemberTaskItem
 
 router = APIRouter(prefix="/members", tags=["Members"])
+
+ACTIVE_STATUSES = {"pending", "in_progress", "review", "blocked"}
+COMPLETED_STATUSES = {"done"}
 
 
 @router.get("/{member_id}/profile", response_model=MemberProfileResponse)
 def get_member_profile(member_id: int, db: Session = Depends(get_db)):
     user = (
         db.query(User)
-        .options(joinedload(User.global_role))
+        .options(
+            joinedload(User.global_role),
+            joinedload(User.user_skills).joinedload(UserSkill.skill),
+            joinedload(User.project_memberships),
+        )
         .filter(User.id == member_id)
         .first()
     )
@@ -27,11 +34,8 @@ def get_member_profile(member_id: int, db: Session = Depends(get_db)):
         .all()
     )
 
-    active_statuses = {"pending", "in_progress", "review", "blocked"}
-    completed_statuses = {"done"}
-
-    active_tasks = [task for task in assigned_tasks if task.status in active_statuses]
-    completed_tasks = [task for task in assigned_tasks if task.status in completed_statuses]
+    active_tasks = [task for task in assigned_tasks if task.status in ACTIVE_STATUSES]
+    completed_tasks = [task for task in assigned_tasks if task.status in COMPLETED_STATUSES]
 
     total_tasks = len(assigned_tasks)
     active_count = len(active_tasks)
@@ -39,13 +43,28 @@ def get_member_profile(member_id: int, db: Session = Depends(get_db)):
 
     completion_rate = round((completed_count / total_tasks) * 100, 2) if total_tasks > 0 else 0.0
 
-    total_active_hours = 0.0
-    for task in active_tasks:
-        if task.estimated_hours is not None:
-            total_active_hours += float(task.estimated_hours)
+    total_active_hours = sum(float(task.estimated_hours) for task in active_tasks if task.estimated_hours is not None)
 
-    current_load = round(min((total_active_hours / 40) * 100, 100), 2)
-    availability = round(max(100 - current_load, 0), 2)
+    latest_membership = None
+    if user.project_memberships:
+        latest_membership = sorted(
+            user.project_memberships,
+            key=lambda item: item.joined_at,
+            reverse=True,
+        )[0]
+
+    capacity_hours = float(latest_membership.weekly_capacity_hours) if latest_membership and latest_membership.weekly_capacity_hours is not None else 40.0
+    declared_availability = float(latest_membership.availability_percentage) if latest_membership and latest_membership.availability_percentage is not None else 100.0
+
+    current_load = round(min((total_active_hours / capacity_hours) * 100, 100), 2) if capacity_hours > 0 else 0.0
+    availability = round(min(declared_availability, max(100 - current_load, 0)), 2)
+
+    avg_experience = 0.0
+    if user.user_skills:
+        avg_experience = round(
+            sum(float(item.years_experience or 0) for item in user.user_skills) / len(user.user_skills),
+            2,
+        )
 
     return MemberProfileResponse(
         id=user.id,
@@ -60,7 +79,18 @@ def get_member_profile(member_id: int, db: Session = Depends(get_db)):
         completion_rate=completion_rate,
         current_load=current_load,
         availability=availability,
-        experience_level=None,
+        project_capacity_hours=capacity_hours,
+        experience_level=avg_experience,
+        skills=[
+            MemberSkillItem(
+                skill_name=item.skill.name if item.skill else f"skill_{item.skill_id}",
+                category=item.skill.category if item.skill else None,
+                level=item.level,
+                years_experience=float(item.years_experience or 0),
+                verified_by_leader=item.verified_by_leader,
+            )
+            for item in user.user_skills
+        ],
         active_task_items=[
             MemberTaskItem(
                 id=task.id,

@@ -59,7 +59,7 @@ export default function Register() {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError("Ocurrió un error al registrarse");
+        setError("Ocurrió un error al crear la cuenta");
       }
     } finally {
       setLoading(false);
@@ -76,7 +76,9 @@ export default function Register() {
         <div className="text-center mb-8">
           <img src={logo} alt="NeuroKanban" className="h-16 mx-auto mb-6" />
           <h1 className="text-3xl text-white mb-2">Crear cuenta</h1>
-          <p className="text-slate-400">Únete a NeuroKanban y organiza mejor el trabajo de tu equipo</p>
+          <p className="text-slate-400">
+            Únete a NeuroKanban y organiza mejor el trabajo de tu equipo
+          </p>
         </div>
 
         <div className="bg-slate-900 rounded-2xl border border-slate-800 p-8 shadow-2xl">
@@ -119,7 +121,7 @@ export default function Register() {
 
             <div>
               <label className="block text-sm text-slate-300 mb-2">
-                Usuario
+                Nombre de usuario
               </label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
@@ -154,6 +156,7 @@ export default function Register() {
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-400 transition-colors"
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -179,6 +182,7 @@ export default function Register() {
                   type="button"
                   onClick={() => setShowConfirmPassword((prev) => !prev)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-400 transition-colors"
+                  aria-label={showConfirmPassword ? "Ocultar confirmación" : "Mostrar confirmación"}
                 >
                   {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -225,12 +229,12 @@ export default function Register() {
 
           <div className="mt-6 text-center">
             <p className="text-slate-400 text-sm">
-              ¿Ya tienes cuenta?{" "}
+              ¿Ya tienes una cuenta?{" "}
               <button
                 onClick={() => navigate("/login")}
                 className="text-cyan-400 hover:text-cyan-300 transition-colors"
               >
-                Inicia sesión
+                Iniciar sesión
               </button>
             </p>
           </div>

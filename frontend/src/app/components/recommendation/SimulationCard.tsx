@@ -106,7 +106,7 @@ export default function SimulationCard({
 
         <div className="p-3 bg-slate-900/40 rounded-lg">
           <p className="text-slate-400 text-xs mb-1">Impacto estimado de horas</p>
-          <p className="text-white">{simulation.estimated_hours_impact}h</p>
+          <p className="text-white">{simulation.estimated_hours_impact} h</p>
         </div>
       </div>
     </div>

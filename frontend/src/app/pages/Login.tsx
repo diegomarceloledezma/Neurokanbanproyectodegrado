@@ -46,7 +46,7 @@ export default function Login() {
       <div className="nk-login-container w-full max-w-md">
         <div className="nk-login-header text-center mb-8">
           <img src={logo} alt="NeuroKanban" className="nk-logo h-16 mx-auto mb-6" />
-          <h1 className="nk-login-title text-3xl text-white mb-2">Bienvenido de vuelta</h1>
+          <h1 className="nk-login-title text-3xl text-white mb-2">Bienvenido nuevamente</h1>
           <p className="nk-login-subtitle text-slate-400">
             Ingresa tus credenciales para continuar
           </p>
@@ -56,7 +56,7 @@ export default function Login() {
           <form onSubmit={handleSubmit} className="nk-login-form space-y-6">
             <div className="nk-form-group">
               <label className="nk-form-label block text-sm text-slate-300 mb-2">
-                Correo o Usuario
+                Correo o usuario
               </label>
               <div className="nk-input-wrapper relative">
                 <Mail className="nk-input-icon absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
@@ -65,7 +65,7 @@ export default function Login() {
                   value={usernameOrEmail}
                   onChange={(e) => setUsernameOrEmail(e.target.value)}
                   className="nk-input w-full pl-11 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-                  placeholder="tu@email.com o tu usuario"
+                  placeholder="tu_correo@empresa.com o tu usuario"
                   required
                 />
               </div>
@@ -89,6 +89,7 @@ export default function Login() {
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-400 transition-colors"
+                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
                 >
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
@@ -96,7 +97,7 @@ export default function Login() {
             </div>
 
             {error && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              <div className="nk-error-message rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
                 {error}
               </div>
             )}
@@ -104,20 +105,20 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="nk-button nk-button--primary w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white rounded-lg hover:from-cyan-600 hover:to-purple-700 transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="nk-submit-button w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white rounded-lg hover:from-cyan-600 hover:to-purple-700 transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {loading ? "Iniciando sesión..." : "Iniciar Sesión"}
+              {loading ? "Ingresando..." : "Iniciar sesión"}
             </button>
           </form>
 
-          <div className="nk-login-footer mt-6 text-center">
-            <p className="nk-login-register-text text-slate-400 text-sm">
+          <div className="nk-register-link-wrapper mt-6 text-center">
+            <p className="text-slate-400 text-sm">
               ¿No tienes cuenta?{" "}
               <button
                 onClick={() => navigate("/register")}
-                className="nk-login-register-link text-cyan-400 hover:text-cyan-300 transition-colors"
+                className="text-cyan-400 hover:text-cyan-300 transition-colors"
               >
-                Regístrate aquí
+                Crear cuenta
               </button>
             </p>
           </div>

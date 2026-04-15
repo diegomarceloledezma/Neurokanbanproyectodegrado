@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Sparkles, Save, AlertCircle } from "lucide-react";
+import { Sparkles, Save, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { createTask } from "../services/taskService";
 import { getAccessToken, getStoredUser } from "../services/sessionService";
+import { getSkills, type SkillResponse } from "../services/skillService";
 
 const priorityOptions = [
   { value: "low", label: "Baja" },
@@ -23,6 +24,12 @@ const taskTypeOptions = [
   { value: "other", label: "Otro" },
 ];
 
+type RequiredSkillFormItem = {
+  localId: string;
+  skill_id: number | "";
+  required_level: number;
+};
+
 export default function CreateTask() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -35,12 +42,47 @@ export default function CreateTask() {
     estimatedHours: 8,
     deadline: "",
     taskType: "",
-    skills: "",
     dependencies: "",
   });
 
+  const [requiredSkills, setRequiredSkills] = useState<RequiredSkillFormItem[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(true);
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const token = getAccessToken();
+  const currentUser = getStoredUser();
+
+  useEffect(() => {
+    const loadSkills = async () => {
+      if (!token) {
+        return;
+      }
+
+      try {
+        setSkillsLoading(true);
+        const data = await getSkills(token);
+        setAvailableSkills(data);
+      } catch (err) {
+        console.error(err);
+        setError("No se pudieron cargar las habilidades disponibles");
+      } finally {
+        setSkillsLoading(false);
+      }
+    };
+
+    loadSkills();
+  }, [token]);
+
+  const selectedSkillIds = useMemo(
+    () =>
+      requiredSkills
+        .map((item) => item.skill_id)
+        .filter((value): value is number => typeof value === "number"),
+    [requiredSkills]
+  );
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -56,6 +98,38 @@ export default function CreateTask() {
     }));
   };
 
+  const addRequiredSkillRow = () => {
+    setRequiredSkills((prev) => [
+      ...prev,
+      {
+        localId: `${Date.now()}-${prev.length}`,
+        skill_id: "",
+        required_level: 3,
+      },
+    ]);
+  };
+
+  const updateRequiredSkillRow = (
+    localId: string,
+    field: "skill_id" | "required_level",
+    value: string
+  ) => {
+    setRequiredSkills((prev) =>
+      prev.map((item) =>
+        item.localId === localId
+          ? {
+              ...item,
+              [field]: field === "skill_id" ? (value ? Number(value) : "") : Number(value),
+            }
+          : item
+      )
+    );
+  };
+
+  const removeRequiredSkillRow = (localId: string) => {
+    setRequiredSkills((prev) => prev.filter((item) => item.localId !== localId));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -63,6 +137,11 @@ export default function CreateTask() {
 
     if (!projectId) {
       setError("No se encontró el identificador del proyecto");
+      return;
+    }
+
+    if (!formData.title.trim()) {
+      setError("Debes ingresar un título");
       return;
     }
 
@@ -76,22 +155,39 @@ export default function CreateTask() {
       return;
     }
 
-    const token = getAccessToken();
-    const currentUser = getStoredUser();
-
     if (!token || !currentUser) {
       navigate("/login");
+      return;
+    }
+
+    const invalidRequiredSkill = requiredSkills.find(
+      (item) => item.skill_id === "" || item.required_level < 1 || item.required_level > 5
+    );
+
+    if (invalidRequiredSkill) {
+      setError("Revisa las habilidades requeridas: todas deben tener una habilidad y un nivel válido");
+      return;
+    }
+
+    const uniqueSkillIds = new Set(
+      requiredSkills
+        .map((item) => item.skill_id)
+        .filter((value): value is number => typeof value === "number")
+    );
+
+    if (uniqueSkillIds.size !== selectedSkillIds.length) {
+      setError("No repitas la misma habilidad requerida");
       return;
     }
 
     setLoading(true);
 
     try {
-      await createTask(
+      const createdTask = await createTask(
         {
           project_id: Number(projectId),
-          title: formData.title,
-          description: formData.description || undefined,
+          title: formData.title.trim(),
+          description: formData.description.trim() || undefined,
           task_type: formData.taskType,
           priority: formData.priority,
           complexity: Number(formData.complexity),
@@ -101,11 +197,17 @@ export default function CreateTask() {
           due_date: formData.deadline || undefined,
           created_by: currentUser.id,
           assigned_to: null,
+          required_skills: requiredSkills
+            .filter((item): item is { localId: string; skill_id: number; required_level: number } => typeof item.skill_id === "number")
+            .map((item) => ({
+              skill_id: item.skill_id,
+              required_level: item.required_level,
+            })),
         },
         token
       );
 
-      navigate(`/kanban/${projectId}`);
+      navigate(`/task/${createdTask.id}`);
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
@@ -115,6 +217,12 @@ export default function CreateTask() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getFilteredOptions = (currentValue: number | "") => {
+    return availableSkills.filter(
+      (skill) => skill.id === currentValue || !selectedSkillIds.includes(skill.id)
+    );
   };
 
   return (
@@ -244,21 +352,89 @@ export default function CreateTask() {
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm text-slate-300 mb-2">
-              Habilidades requeridas
-            </label>
-            <input
-              type="text"
-              name="skills"
-              value={formData.skills}
-              onChange={handleChange}
-              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-              placeholder="Ej: redacción, análisis, coordinación"
-            />
-            <p className="text-slate-500 text-xs mt-1">
-              Este campo aún no está conectado al backend, pero se conservará para la siguiente fase.
-            </p>
+          <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-4 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-white">Habilidades requeridas</h3>
+                <p className="text-slate-400 text-sm">
+                  Estas habilidades serán usadas por el motor inteligente al recomendar asignaciones.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={addRequiredSkillRow}
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                Agregar habilidad
+              </button>
+            </div>
+
+            {skillsLoading ? (
+              <p className="text-slate-400 text-sm">Cargando habilidades disponibles...</p>
+            ) : availableSkills.length === 0 ? (
+              <p className="text-slate-400 text-sm">No hay habilidades registradas todavía.</p>
+            ) : requiredSkills.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-600 p-4 text-slate-400 text-sm">
+                Aún no agregaste habilidades requeridas. Puedes crear la tarea sin ellas, pero la recomendación será menos precisa.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {requiredSkills.map((item, index) => (
+                  <div
+                    key={item.localId}
+                    className="grid grid-cols-1 md:grid-cols-[1fr_140px_auto] gap-3 items-end"
+                  >
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">
+                        Habilidad #{index + 1}
+                      </label>
+                      <select
+                        value={item.skill_id}
+                        onChange={(e) => updateRequiredSkillRow(item.localId, "skill_id", e.target.value)}
+                        className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+                      >
+                        <option value="">Selecciona una habilidad</option>
+                        {getFilteredOptions(item.skill_id).map((skill) => (
+                          <option key={skill.id} value={skill.id}>
+                            {skill.name}
+                            {skill.category ? ` · ${skill.category}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm text-slate-300 mb-2">
+                        Nivel requerido
+                      </label>
+                      <select
+                        value={item.required_level}
+                        onChange={(e) =>
+                          updateRequiredSkillRow(item.localId, "required_level", e.target.value)
+                        }
+                        className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+                      >
+                        <option value="1">1 - Básico</option>
+                        <option value="2">2 - Inicial</option>
+                        <option value="3">3 - Intermedio</option>
+                        <option value="4">4 - Avanzado</option>
+                        <option value="5">5 - Experto</option>
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeRequiredSkillRow(item.localId)}
+                      className="inline-flex items-center justify-center gap-2 px-3 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 hover:bg-red-500/20 transition-all"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div>
@@ -274,7 +450,7 @@ export default function CreateTask() {
               placeholder="Identificadores de tareas relacionadas"
             />
             <p className="text-slate-500 text-xs mt-1">
-              Este campo aún no está conectado al backend, pero se incorporará más adelante.
+              Este campo todavía no está conectado al backend.
             </p>
           </div>
         </div>
@@ -283,7 +459,7 @@ export default function CreateTask() {
           <div className="flex items-center gap-3 mb-4">
             <AlertCircle className="w-5 h-5 text-cyan-400" />
             <p className="text-slate-300 text-sm">
-              En la siguiente etapa podrás analizar la tarea y obtener recomendaciones inteligentes de asignación.
+              Después de guardar, podrás abrir el detalle y lanzar una recomendación inteligente usando las habilidades registradas.
             </p>
           </div>
 

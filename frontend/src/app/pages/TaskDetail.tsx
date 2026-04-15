@@ -1,6 +1,14 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Calendar, Clock, AlertCircle, MessageSquare, Sparkles, TrendingUp } from "lucide-react";
+import {
+  Calendar,
+  Clock,
+  AlertCircle,
+  MessageSquare,
+  Sparkles,
+  TrendingUp,
+  BrainCircuit,
+} from "lucide-react";
 import { getTaskById, type TaskResponse } from "../services/taskService";
 import { getAccessToken } from "../services/sessionService";
 
@@ -40,6 +48,14 @@ const formatDate = (date?: string | null) => {
     month: "short",
     day: "numeric",
   });
+};
+
+const levelLabels: Record<number, string> = {
+  1: "Básico",
+  2: "Inicial",
+  3: "Intermedio",
+  4: "Avanzado",
+  5: "Experto",
 };
 
 export default function TaskDetail() {
@@ -105,11 +121,15 @@ export default function TaskDetail() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-2 flex-wrap">
             <h1 className="text-3xl text-white">{task.title}</h1>
-            <span className={`text-sm px-3 py-1 rounded ${priorityColors[task.priority] ?? "text-slate-300 bg-slate-500/10"}`}>
+            <span
+              className={`text-sm px-3 py-1 rounded ${
+                priorityColors[task.priority] ?? "text-slate-300 bg-slate-500/10"
+              }`}
+            >
               {priorityLabels[task.priority] ?? task.priority}
             </span>
           </div>
@@ -135,7 +155,11 @@ export default function TaskDetail() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <p className="text-slate-400 text-sm mb-1">Prioridad</p>
-                <span className={`inline-block text-sm px-3 py-1 rounded ${priorityColors[task.priority] ?? "text-slate-300 bg-slate-500/10"}`}>
+                <span
+                  className={`inline-block text-sm px-3 py-1 rounded ${
+                    priorityColors[task.priority] ?? "text-slate-300 bg-slate-500/10"
+                  }`}
+                >
                   {priorityLabels[task.priority] ?? task.priority}
                 </span>
               </div>
@@ -167,7 +191,7 @@ export default function TaskDetail() {
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-cyan-400" />
                   <p className="text-white">
-                    {task.estimated_hours ? `${task.estimated_hours}h` : "No definido"}
+                    {task.estimated_hours ? `${task.estimated_hours} h` : "No definido"}
                   </p>
                 </div>
               </div>
@@ -185,7 +209,7 @@ export default function TaskDetail() {
                   <p className="text-slate-400 text-sm mb-1">Tiempo real</p>
                   <div className="flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-green-400" />
-                    <p className="text-white">{task.actual_hours}h</p>
+                    <p className="text-white">{task.actual_hours} h</p>
                   </div>
                 </div>
               )}
@@ -200,6 +224,40 @@ export default function TaskDetail() {
                 <p className="text-white">{formatDate(task.created_at)}</p>
               </div>
             </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <BrainCircuit className="w-5 h-5 text-cyan-400" />
+              <h2 className="text-xl text-white">Skills requeridas</h2>
+            </div>
+
+            {task.required_skills.length > 0 ? (
+              <div className="flex flex-wrap gap-3">
+                {task.required_skills.map((requiredSkill) => (
+                  <div
+                    key={requiredSkill.id}
+                    className="px-4 py-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5"
+                  >
+                    <p className="text-white font-medium">
+                      {requiredSkill.skill?.name ?? `Skill ${requiredSkill.skill_id}`}
+                    </p>
+                    <p className="text-sm text-slate-400">
+                      Nivel requerido: {requiredSkill.required_level} - {levelLabels[requiredSkill.required_level] ?? "No definido"}
+                    </p>
+                    {requiredSkill.skill?.category && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Categoría: {requiredSkill.skill.category}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-slate-700 p-4 text-slate-400 text-sm">
+                Esta tarea aún no tiene skills requeridas registradas. La recomendación puede funcionar, pero será menos precisa.
+              </div>
+            )}
           </div>
 
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -290,18 +348,24 @@ export default function TaskDetail() {
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400 text-sm">Tiempo estimado</span>
-                    <span className="text-white">{task.estimated_hours}h</span>
+                    <span className="text-white">{task.estimated_hours} h</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400 text-sm">Tiempo real</span>
-                    <span className="text-white">{task.actual_hours}h</span>
+                    <span className="text-white">{task.actual_hours} h</span>
                   </div>
                   <div className="pt-3 border-t border-slate-800">
                     <div className="flex justify-between items-center">
                       <span className="text-slate-400 text-sm">Diferencia</span>
-                      <span className={task.actual_hours <= task.estimated_hours ? "text-green-400" : "text-red-400"}>
+                      <span
+                        className={
+                          task.actual_hours <= task.estimated_hours
+                            ? "text-green-400"
+                            : "text-red-400"
+                        }
+                      >
                         {task.actual_hours <= task.estimated_hours ? "-" : "+"}
-                        {Math.abs(Number(task.actual_hours) - Number(task.estimated_hours))}h
+                        {Math.abs(Number(task.actual_hours) - Number(task.estimated_hours))} h
                       </span>
                     </div>
                   </div>
@@ -324,6 +388,18 @@ export default function TaskDetail() {
               <button className="w-full py-2 px-4 bg-red-500/10 text-red-400 rounded-lg hover:bg-red-500/20 transition-all text-sm text-left">
                 Eliminar tarea
               </button>
+            </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-cyan-400 mt-1" />
+              <div>
+                <h3 className="text-white mb-2">Sobre esta tarea</h3>
+                <p className="text-slate-400 text-sm">
+                  Esta vista ya muestra los insumos que usa el módulo inteligente para recomendar asignaciones.
+                </p>
+              </div>
             </div>
           </div>
         </div>

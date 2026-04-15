@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Mail, Briefcase, TrendingUp, CheckCircle, Clock, Award } from "lucide-react";
+import { Mail, Briefcase, TrendingUp, CheckCircle, Clock, Award, BrainCircuit } from "lucide-react";
 import { getMemberProfile, type MemberProfileResponse } from "../services/memberService";
 import { getAccessToken } from "../services/sessionService";
 
@@ -23,6 +23,14 @@ const statusLabels: Record<string, string> = {
   review: "En revisión",
   done: "Finalizada",
   blocked: "Bloqueada",
+};
+
+const levelLabels: Record<number, string> = {
+  1: "Básico",
+  2: "Inicial",
+  3: "Intermedio",
+  4: "Avanzado",
+  5: "Experto",
 };
 
 export default function MemberProfile() {
@@ -66,13 +74,13 @@ export default function MemberProfile() {
   }, [memberId, navigate]);
 
   if (loading) {
-    return <div className="text-slate-300">Cargando perfil...</div>;
+    return <div className="text-slate-300">Cargando perfil del integrante...</div>;
   }
 
   if (error || !member) {
     return (
       <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        {error || "Miembro no encontrado"}
+        {error || "Integrante no encontrado"}
       </div>
     );
   }
@@ -82,7 +90,7 @@ export default function MemberProfile() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-start gap-6">
+        <div className="flex items-start gap-6 flex-wrap">
           <div className="w-24 h-24 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-3xl">
             {member.full_name
               .split(" ")
@@ -92,7 +100,7 @@ export default function MemberProfile() {
               .toUpperCase()}
           </div>
 
-          <div className="flex-1">
+          <div className="flex-1 min-w-[280px]">
             <h1 className="text-3xl text-white mb-2">{member.full_name}</h1>
             <div className="flex items-center gap-4 text-slate-400 mb-4 flex-wrap">
               <div className="flex items-center gap-2">
@@ -105,9 +113,9 @@ export default function MemberProfile() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="p-3 bg-slate-800/50 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Experiencia</p>
+                <p className="text-slate-400 text-xs mb-1">Experiencia promedio</p>
                 <p className="text-white">
                   {member.experience_level !== null && member.experience_level !== undefined
                     ? `${member.experience_level} años`
@@ -126,6 +134,14 @@ export default function MemberProfile() {
                 <p className="text-slate-400 text-xs mb-1">Cumplimiento</p>
                 <p className="text-white">{member.completion_rate}%</p>
               </div>
+              <div className="p-3 bg-slate-800/50 rounded-lg">
+                <p className="text-slate-400 text-xs mb-1">Capacidad semanal</p>
+                <p className="text-white">
+                  {member.project_capacity_hours !== null && member.project_capacity_hours !== undefined
+                    ? `${member.project_capacity_hours} h`
+                    : "No definida"}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -134,21 +150,23 @@ export default function MemberProfile() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="space-y-6">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h2 className="text-xl text-white mb-4">Perfil del integrante</h2>
+            <h2 className="text-xl text-white mb-4">Resumen del integrante</h2>
             <div className="space-y-3 text-sm">
               <div className="p-3 bg-slate-800/50 rounded-lg">
                 <p className="text-slate-400 text-xs mb-1">Rol en la plataforma</p>
                 <p className="text-white">{displayRole}</p>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Usuario</p>
+                <p className="text-slate-400 text-xs mb-1">Nombre de usuario</p>
                 <p className="text-white">{member.username}</p>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Observación</p>
-                <p className="text-slate-300">
-                  Las habilidades y experiencia detallada se incorporarán en una siguiente fase del sistema.
-                </p>
+                <p className="text-slate-400 text-xs mb-1">Skills registradas</p>
+                <p className="text-white">{member.skills.length}</p>
+              </div>
+              <div className="p-3 bg-slate-800/50 rounded-lg">
+                <p className="text-slate-400 text-xs mb-1">Total de tareas</p>
+                <p className="text-white">{member.total_tasks}</p>
               </div>
             </div>
           </div>
@@ -180,7 +198,7 @@ export default function MemberProfile() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3 bg-slate-800/50 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Estado</p>
+                <p className="text-slate-400 text-xs mb-1">Estado operativo</p>
                 <p
                   className={`text-sm ${
                     member.current_load > 70
@@ -230,7 +248,7 @@ export default function MemberProfile() {
                   <p className="text-white text-lg">{member.completed_tasks}</p>
                 </div>
                 <div className="p-3 bg-slate-800/50 rounded-lg">
-                  <p className="text-slate-400 text-xs mb-1">En progreso</p>
+                  <p className="text-slate-400 text-xs mb-1">Tareas en curso</p>
                   <p className="text-white text-lg">{member.active_tasks}</p>
                 </div>
               </div>
@@ -239,6 +257,42 @@ export default function MemberProfile() {
         </div>
 
         <div className="lg:col-span-2 space-y-6">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <BrainCircuit className="w-5 h-5 text-cyan-400" />
+              <h2 className="text-xl text-white">Skills registradas</h2>
+            </div>
+
+            {member.skills.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {member.skills.map((skill, index) => (
+                  <div key={`${skill.skill_name}-${index}`} className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-white">{skill.skill_name}</p>
+                        <p className="text-slate-400 text-sm">{skill.category || "Sin categoría"}</p>
+                      </div>
+                      <span className="text-xs px-2 py-1 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
+                        Nivel {skill.level}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-sm text-slate-400 flex-wrap gap-2">
+                      <span>{levelLabels[skill.level] ?? "No definido"}</span>
+                      <span>{skill.years_experience} años</span>
+                      <span className={skill.verified_by_leader ? "text-green-400" : "text-yellow-400"}>
+                        {skill.verified_by_leader ? "Verificada" : "Pendiente de verificación"}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center p-8 bg-slate-800/30 rounded-lg">
+                <p className="text-slate-500">No hay skills registradas todavía</p>
+              </div>
+            )}
+          </div>
+
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <div className="flex items-center gap-3 mb-4">
               <Clock className="w-5 h-5 text-cyan-400" />
@@ -253,7 +307,7 @@ export default function MemberProfile() {
                     className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/30 transition-all cursor-pointer"
                     onClick={() => navigate(`/task/${task.id}`)}
                   >
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-start justify-between mb-2 gap-3">
                       <h3 className="text-white">{task.title}</h3>
                       <span
                         className={`text-xs px-2 py-1 rounded ${
@@ -273,11 +327,9 @@ export default function MemberProfile() {
                     <div className="flex items-center gap-4 text-sm text-slate-400 flex-wrap">
                       <span>Complejidad: {task.complexity}/5</span>
                       <span>•</span>
-                      <span>{task.estimated_hours ?? 0}h estimadas</span>
+                      <span>{task.estimated_hours ?? 0} h estimadas</span>
                       <span>•</span>
-                      <span className="text-cyan-400">
-                        {statusLabels[task.status] ?? task.status}
-                      </span>
+                      <span className="text-cyan-400">{statusLabels[task.status] ?? task.status}</span>
                     </div>
                   </div>
                 ))}
@@ -303,7 +355,7 @@ export default function MemberProfile() {
                     className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer"
                     onClick={() => navigate(`/task/${task.id}`)}
                   >
-                    <div className="flex items-start justify-between mb-2">
+                    <div className="flex items-start justify-between mb-2 gap-3">
                       <h3 className="text-white">{task.title}</h3>
                       <CheckCircle className="w-5 h-5 text-green-400" />
                     </div>
@@ -315,7 +367,7 @@ export default function MemberProfile() {
                       task.estimated_hours !== undefined ? (
                         <>
                           <span>
-                            {task.actual_hours}h / {task.estimated_hours}h
+                            {task.actual_hours} h / {task.estimated_hours} h
                           </span>
                           <span>•</span>
                           <span
@@ -326,7 +378,7 @@ export default function MemberProfile() {
                             }
                           >
                             {task.actual_hours <= task.estimated_hours
-                              ? "Dentro del tiempo"
+                              ? "Dentro del tiempo previsto"
                               : "Tiempo extendido"}
                           </span>
                         </>
@@ -339,7 +391,7 @@ export default function MemberProfile() {
               </div>
             ) : (
               <div className="flex items-center justify-center p-8 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-500">No hay tareas completadas aún</p>
+                <p className="text-slate-500">No hay tareas completadas todavía</p>
               </div>
             )}
           </div>

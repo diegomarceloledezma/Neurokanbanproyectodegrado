@@ -14,6 +14,16 @@ export type ProjectResponse = {
     name: string;
     description?: string | null;
   } | null;
+  team?: {
+    id: number;
+    name: string;
+    description?: string | null;
+    area?: {
+      id: number;
+      name: string;
+      description?: string | null;
+    } | null;
+  } | null;
   creator?: {
     id: number;
     full_name: string;
@@ -29,6 +39,28 @@ export type ProjectResponse = {
       description?: string | null;
     } | null;
   } | null;
+  members?: Array<{
+    id: number;
+    project_role: string;
+    weekly_capacity_hours?: number | null;
+    availability_percentage?: number | null;
+    joined_at: string;
+    user?: {
+      id: number;
+      full_name: string;
+      username: string;
+      email: string;
+      avatar_url?: string | null;
+      is_active: boolean;
+      created_at: string;
+      updated_at: string;
+      global_role?: {
+        id: number;
+        name: string;
+        description?: string | null;
+      } | null;
+    } | null;
+  }>;
 };
 
 export async function getProjects(token: string): Promise<ProjectResponse[]> {
@@ -47,7 +79,10 @@ export async function getProjects(token: string): Promise<ProjectResponse[]> {
   return response.json();
 }
 
-export async function getProjectById(projectId: string, token: string): Promise<ProjectResponse> {
+export async function getProjectById(
+  projectId: string,
+  token: string
+): Promise<ProjectResponse> {
   const response = await fetch(`${API_BASE_URL}/projects/${projectId}`, {
     method: "GET",
     headers: {

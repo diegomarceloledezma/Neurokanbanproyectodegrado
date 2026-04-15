@@ -5,10 +5,10 @@ import { getTasksByProject, type TaskResponse } from "../services/taskService";
 import { getAccessToken } from "../services/sessionService";
 
 const columns = [
-  { id: "pending", name: "Pendiente", color: "border-slate-600" },
+  { id: "pending", name: "Pendientes", color: "border-slate-600" },
   { id: "in_progress", name: "En progreso", color: "border-cyan-500" },
   { id: "review", name: "En revisión", color: "border-purple-500" },
-  { id: "done", name: "Finalizada", color: "border-green-500" },
+  { id: "done", name: "Finalizadas", color: "border-green-500" },
 ];
 
 const priorityColors: Record<string, string> = {
@@ -23,6 +23,18 @@ const priorityLabels: Record<string, string> = {
   medium: "Media",
   high: "Alta",
   critical: "Crítica",
+};
+
+const taskTypeLabels: Record<string, string> = {
+  feature: "Funcionalidad",
+  bug: "Corrección",
+  improvement: "Mejora",
+  research: "Investigación",
+  documentation: "Documentación",
+  design: "Diseño",
+  marketing: "Marketing",
+  operations: "Operaciones",
+  other: "Otro",
 };
 
 export default function KanbanBoard() {
@@ -66,11 +78,7 @@ export default function KanbanBoard() {
   }, [projectId, navigate]);
 
   if (loading) {
-    return (
-      <div className="text-slate-300">
-        Cargando tablero...
-      </div>
-    );
+    return <div className="text-slate-300">Cargando tablero Kanban...</div>;
   }
 
   if (error) {
@@ -83,10 +91,10 @@ export default function KanbanBoard() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl text-white mb-2">Tablero Kanban</h1>
-          <p className="text-slate-400">Gestiona el flujo de trabajo del proyecto</p>
+          <p className="text-slate-400">Organiza y visualiza el avance de las tareas del proyecto</p>
         </div>
 
         <button
@@ -146,7 +154,7 @@ export default function KanbanBoard() {
 
                     <div className="space-y-2 text-sm">
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-500">Complejidad:</span>
+                        <span className="text-slate-500">Complejidad</span>
                         <div className="flex gap-1">
                           {[...Array(5)].map((_, i) => (
                             <div
@@ -162,15 +170,17 @@ export default function KanbanBoard() {
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <span className="text-slate-500">Tiempo estimado:</span>
+                        <span className="text-slate-500">Tiempo estimado</span>
                         <span className="text-slate-300">
-                          {task.estimated_hours ? `${task.estimated_hours}h` : "No definido"}
+                          {task.estimated_hours ? `${task.estimated_hours} h` : "No definido"}
                         </span>
                       </div>
 
-                      <div className="flex items-center justify-between">
-                        <span className="text-slate-500">Tipo:</span>
-                        <span className="text-slate-300">{task.task_type}</span>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-slate-500">Tipo</span>
+                        <span className="text-slate-300 text-right">
+                          {taskTypeLabels[task.task_type] ?? task.task_type}
+                        </span>
                       </div>
 
                       {task.assignee && (
@@ -183,9 +193,7 @@ export default function KanbanBoard() {
                               .slice(0, 2)
                               .toUpperCase()}
                           </div>
-                          <span className="text-slate-300 text-sm">
-                            {task.assignee.full_name}
-                          </span>
+                          <span className="text-slate-300 text-sm">{task.assignee.full_name}</span>
                         </div>
                       )}
                     </div>
@@ -194,7 +202,7 @@ export default function KanbanBoard() {
 
                 {columnTasks.length === 0 && (
                   <div className="flex items-center justify-center h-32 text-slate-600">
-                    <p className="text-sm">No hay tareas</p>
+                    <p className="text-sm">No hay tareas en esta columna</p>
                   </div>
                 )}
               </div>

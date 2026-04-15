@@ -40,7 +40,7 @@ export default function MainLayout() {
 
   const menuItems = useMemo(
     () => [
-      { name: "Dashboard", path: "/", icon: LayoutDashboard, disabled: false },
+      { name: "Panel principal", path: "/", icon: LayoutDashboard, disabled: false },
       {
         name: "Proyectos",
         path: firstProjectId ? `/project/${firstProjectId}` : "#",
@@ -48,14 +48,14 @@ export default function MainLayout() {
         disabled: !firstProjectId,
       },
       {
-        name: "Tareas",
+        name: "Tablero Kanban",
         path: firstProjectId ? `/kanban/${firstProjectId}` : "#",
         icon: CheckSquare,
         disabled: !firstProjectId,
       },
       { name: "Equipo", path: "/member/1", icon: Users, disabled: false },
       { name: "Métricas", path: "/metrics", icon: BarChart3, disabled: false },
-      { name: "Historial", path: "/history", icon: History, disabled: false },
+      { name: "Historial de decisiones", path: "/history", icon: History, disabled: false },
     ],
     [firstProjectId]
   );
@@ -150,7 +150,10 @@ export default function MainLayout() {
           </div>
 
           <div className="nk-header__actions flex items-center gap-4">
-            <button className="nk-notification-button relative p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all">
+            <button
+              aria-label="Notificaciones"
+              className="nk-notification-button relative p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all"
+            >
               <Bell className="nk-notification-button__icon w-5 h-5" />
               <span className="nk-notification-badge absolute top-1 right-1 w-2 h-2 bg-cyan-500 rounded-full"></span>
             </button>

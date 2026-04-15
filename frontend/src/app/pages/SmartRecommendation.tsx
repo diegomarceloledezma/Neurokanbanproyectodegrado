@@ -58,9 +58,9 @@ const strategyLabels: Record<string, string> = {
 };
 
 const strategyDescriptions: Record<string, string> = {
-  balance: "Busca equilibrio entre carga, disponibilidad y desempeño.",
+  balance: "Busca equilibrio entre carga, disponibilidad, skills y desempeño.",
   efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
-  urgency: "Favorece rapidez de respuesta y menor saturación.",
+  urgency: "Favorece rapidez de respuesta y menor saturación para tareas urgentes.",
   learning: "Promueve desarrollo del equipo con riesgo controlado.",
 };
 
@@ -104,6 +104,7 @@ export default function SmartRecommendation() {
   const [reloadingAnalysis, setReloadingAnalysis] = useState(false);
   const [assigningMemberId, setAssigningMemberId] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
 
   useEffect(() => {
     const loadTask = async () => {
@@ -147,6 +148,7 @@ export default function SmartRecommendation() {
       try {
         setReloadingAnalysis(true);
         setError("");
+        setSuccessMessage("");
 
         const [recommendations, simulation, insights] = await Promise.all([
           getTaskRecommendations(taskId, token, selectedStrategy),
@@ -180,6 +182,7 @@ export default function SmartRecommendation() {
     }
 
     setError("");
+    setSuccessMessage("");
     setAssigningMemberId(rec.member.id);
 
     try {
@@ -188,16 +191,23 @@ export default function SmartRecommendation() {
         {
           assigned_to: rec.member.id,
           assigned_by: currentUser.id,
-          source: "recommendation",
+          source: "recommended",
           strategy: recommendationData.strategy,
           recommendation_score: rec.score,
           risk_level: rec.risk_level,
           reason: rec.reason,
+          recommendation_used: true,
         },
         token
       );
 
-      navigate(`/task/${taskId}`);
+      setSuccessMessage(
+        `La tarea fue asignada a ${rec.member.full_name} y la decisión quedó registrada.`
+      );
+
+      setTimeout(() => {
+        navigate(`/task/${taskId}`);
+      }, 1000);
     } catch (err) {
       if (err instanceof Error) setError(err.message);
       else setError("No se pudo asignar la tarea");
@@ -226,62 +236,96 @@ export default function SmartRecommendation() {
   if (!task) {
     return (
       <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        No se pudo cargar la tarea
+        No se encontró la tarea.
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <div className="bg-gradient-to-r from-cyan-500/10 via-purple-500/10 to-cyan-500/10 border border-cyan-500/20 rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-3 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-lg">
-            <Sparkles className="w-6 h-6 text-white" />
+    <div className="max-w-7xl mx-auto space-y-6">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <div className="flex items-center gap-3 mb-2 flex-wrap">
+            <h1 className="text-3xl text-white">Recomendación inteligente</h1>
+            <span className="px-3 py-1 bg-cyan-500/10 text-cyan-400 rounded-lg text-sm border border-cyan-500/20">
+              NeuroKanban IA
+            </span>
           </div>
-          <div>
-            <h1 className="text-2xl text-white">Recomendación inteligente</h1>
-            <p className="text-cyan-300">
-              Análisis automático para apoyar la asignación de la tarea
-            </p>
-          </div>
+          <p className="text-slate-400">
+            Evalúa a quién asignar la tarea con base en skills, carga, disponibilidad y estrategia.
+          </p>
         </div>
+
+        <button
+          onClick={() => navigate(`/task/${taskId}`)}
+          className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700 transition-all"
+        >
+          Volver al detalle
+        </button>
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
           {error}
         </div>
       )}
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h2 className="text-xl text-white mb-4">Tarea seleccionada</h2>
-        <div className="bg-slate-800/50 rounded-lg p-4">
-          <h3 className="text-white mb-2">{task.title}</h3>
-          <p className="text-slate-400 text-sm mb-4">
-            {task.description || "Esta tarea no tiene descripción registrada."}
-          </p>
+      {successMessage && (
+        <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-4 text-green-300">
+          {successMessage}
+        </div>
+      )}
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div>
-              <p className="text-slate-500 text-xs mb-1">Prioridad</p>
-              <p className="text-white text-sm">
-                {priorityLabels[task.priority] ?? task.priority}
-              </p>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-[280px]">
+            <div className="flex items-center gap-3 mb-3">
+              <Sparkles className="w-6 h-6 text-cyan-400" />
+              <h2 className="text-2xl text-white">{task.title}</h2>
             </div>
-            <div>
-              <p className="text-slate-500 text-xs mb-1">Complejidad</p>
-              <p className="text-white text-sm">{task.complexity}/5</p>
+
+            <p className="text-slate-400 text-sm mb-4">
+              {task.description || "Esta tarea no tiene descripción registrada."}
+            </p>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-slate-500 text-xs mb-1">Prioridad</p>
+                <p className="text-white text-sm">
+                  {priorityLabels[task.priority] ?? task.priority}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs mb-1">Complejidad</p>
+                <p className="text-white text-sm">{task.complexity}/5</p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs mb-1">Tiempo estimado</p>
+                <p className="text-white text-sm">
+                  {task.estimated_hours ? `${task.estimated_hours} h` : "No definido"}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500 text-xs mb-1">Fecha límite</p>
+                <p className="text-white text-sm">{daysRemaining(task.due_date)}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-slate-500 text-xs mb-1">Tiempo estimado</p>
-              <p className="text-white text-sm">
-                {task.estimated_hours ? `${task.estimated_hours}h` : "No definido"}
-              </p>
-            </div>
-            <div>
-              <p className="text-slate-500 text-xs mb-1">Fecha límite</p>
-              <p className="text-white text-sm">{daysRemaining(task.due_date)}</p>
-            </div>
+
+            {task.required_skills.length > 0 && (
+              <div className="mt-5">
+                <p className="text-slate-500 text-xs mb-2">Skills requeridas</p>
+                <div className="flex flex-wrap gap-2">
+                  {task.required_skills.map((item) => (
+                    <span
+                      key={item.id}
+                      className="px-3 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm"
+                    >
+                      {item.skill?.name ?? `Skill ${item.skill_id}`} · nivel {item.required_level}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -342,19 +386,21 @@ export default function SmartRecommendation() {
           )}
         </div>
 
-        {recommendationData?.recommendations.map((rec, index) => (
-          <RecommendationCard
-            key={rec.member.id}
-            rec={rec}
-            index={index}
-            assigningMemberId={assigningMemberId}
-            onAssign={handleAssign}
-            onViewProfile={(memberId) => navigate(`/member/${memberId}`)}
-            roleLabels={roleLabels}
-            riskColors={riskColors}
-            riskLabels={riskLabels}
-          />
-        )) ?? (
+        {recommendationData?.recommendations?.length ? (
+          recommendationData.recommendations.map((rec, index) => (
+            <RecommendationCard
+              key={rec.member.id}
+              rec={rec}
+              index={index}
+              assigningMemberId={assigningMemberId}
+              onAssign={handleAssign}
+              onViewProfile={(memberId) => navigate(`/member/${memberId}`)}
+              roleLabels={roleLabels}
+              riskColors={riskColors}
+              riskLabels={riskLabels}
+            />
+          ))
+        ) : (
           <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
             No hay recomendaciones disponibles.
           </div>
@@ -371,7 +417,7 @@ export default function SmartRecommendation() {
           </div>
           {simulationData && (
             <span className="text-sm text-slate-400">
-              Estrategia aplicada:{" "}
+              Estrategia aplicada: {" "}
               <span className="text-white">
                 {strategyLabels[simulationData.strategy] ?? simulationData.strategy}
               </span>
@@ -380,19 +426,21 @@ export default function SmartRecommendation() {
         </div>
 
         <div className="space-y-4">
-          {simulationData?.simulations.map((simulation, index) => (
-            <SimulationCard
-              key={simulation.member.id}
-              simulation={simulation}
-              index={index}
-              roleLabels={roleLabels}
-              riskColors={riskColors}
-              riskLabels={riskLabels}
-              formatPercent={formatPercent}
-              getLoadChangeLabel={getLoadChangeLabel}
-              getActiveTasksChangeLabel={getActiveTasksChangeLabel}
-            />
-          )) ?? (
+          {simulationData?.simulations?.length ? (
+            simulationData.simulations.map((simulation, index) => (
+              <SimulationCard
+                key={simulation.member.id}
+                simulation={simulation}
+                index={index}
+                roleLabels={roleLabels}
+                riskColors={riskColors}
+                riskLabels={riskLabels}
+                formatPercent={formatPercent}
+                getLoadChangeLabel={getLoadChangeLabel}
+                getActiveTasksChangeLabel={getActiveTasksChangeLabel}
+              />
+            ))
+          ) : (
             <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-6 text-slate-400">
               No hay simulaciones disponibles.
             </div>
@@ -406,10 +454,8 @@ export default function SmartRecommendation() {
           <div>
             <h3 className="text-white mb-2">Sobre esta recomendación</h3>
             <p className="text-slate-400 text-sm">
-              Esta versión ya permite interpretar la tarea, sugerir una estrategia de asignación,
-              comparar escenarios antes de decidir y registrar la asignación real con trazabilidad.
-              En siguientes fases se incorporarán habilidades reales, alertas de desbalance y una
-              evolución más fuerte del componente de inteligencia.
+              Esta vista ya interpreta la tarea, usa skills requeridas reales, compara escenarios
+              antes de decidir y registra la asignación final con trazabilidad para revisión futura.
             </p>
           </div>
         </div>

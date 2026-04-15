@@ -189,6 +189,48 @@ class AssignmentHistoryItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AssignmentHistoryUserSummary(BaseModel):
+    id: int
+    full_name: str
+    email: EmailStr
+    global_role: Optional[RoleBase] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssignmentHistoryTaskSummary(BaseModel):
+    id: int
+    project_id: int
+    title: str
+    priority: str
+    status: str
+    complexity: int
+    estimated_hours: Optional[float] = None
+    actual_hours: Optional[float] = None
+    due_date: Optional[date] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssignmentHistoryDetailedItem(BaseModel):
+    id: int
+    task_id: int
+    assigned_to: int
+    assigned_by: Optional[int] = None
+    source: str
+    strategy: Optional[str] = None
+    recommendation_score: Optional[float] = None
+    risk_level: Optional[str] = None
+    reason: Optional[str] = None
+    recommendation_used: bool = True
+    created_at: datetime
+    task: AssignmentHistoryTaskSummary
+    assigned_user: AssignmentHistoryUserSummary
+    assigned_by_user: Optional[AssignmentHistoryUserSummary] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MemberTaskItem(BaseModel):
     id: int
     title: str

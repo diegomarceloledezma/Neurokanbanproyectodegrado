@@ -22,6 +22,12 @@ const statusLabels: Record<string, string> = {
   cancelled: "Cancelado",
 };
 
+const roleLabels: Record<string, string> = {
+  admin: "Administrador",
+  leader: "Líder de equipo",
+  member: "Integrante",
+};
+
 export default function Project() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -63,11 +69,7 @@ export default function Project() {
   }, [id, navigate]);
 
   if (loading) {
-    return (
-      <div className="text-slate-300">
-        Cargando proyecto...
-      </div>
-    );
+    return <div className="text-slate-300">Cargando proyecto...</div>;
   }
 
   if (error || !project) {
@@ -81,20 +83,21 @@ export default function Project() {
   const displayStatus = statusLabels[project.status] ?? project.status;
   const areaName = project.area?.name ?? "No definida";
   const creatorName = project.creator?.full_name ?? "No disponible";
-  const creatorRole = project.creator?.global_role?.name ?? "Sin rol";
+  const creatorRole = roleLabels[project.creator?.global_role?.name ?? ""] ?? "Sin rol definido";
+  const memberCount = project.members?.length ?? 0;
 
   return (
     <div className="space-y-6">
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-start justify-between mb-4">
+        <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
           <div>
             <h1 className="text-3xl text-white mb-2">{project.name}</h1>
             <p className="text-slate-400">
-              {project.description || "Este proyecto aún no tiene una descripción registrada."}
+              {project.description || "Este proyecto todavía no tiene una descripción registrada."}
             </p>
           </div>
 
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             <button
               onClick={() => navigate(`/task/create/${project.id}`)}
               className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-cyan-500 to-purple-600 text-white rounded-lg hover:from-cyan-600 hover:to-purple-700 transition-all shadow-lg shadow-cyan-500/20"
@@ -104,16 +107,16 @@ export default function Project() {
             </button>
 
             <button
-              onClick={() => navigate(`/recommendation/task-2`)}
+              onClick={() => navigate("/decision-history")}
               className="flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"
             >
               <Sparkles className="w-4 h-4 text-cyan-400" />
-              Ver recomendaciones
+              Historial de decisiones
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-6">
           <div className="flex items-center gap-3">
             <div className="p-3 bg-cyan-500/10 rounded-lg">
               <TrendingUp className="w-5 h-5 text-cyan-500" />
@@ -129,7 +132,7 @@ export default function Project() {
               <Calendar className="w-5 h-5 text-purple-500" />
             </div>
             <div>
-              <p className="text-slate-400 text-sm">Área del proyecto</p>
+              <p className="text-slate-400 text-sm">Área principal</p>
               <p className="text-white text-xl">{areaName}</p>
             </div>
           </div>
@@ -137,6 +140,16 @@ export default function Project() {
           <div className="flex items-center gap-3">
             <div className="p-3 bg-green-500/10 rounded-lg">
               <Users className="w-5 h-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-slate-400 text-sm">Integrantes registrados</p>
+              <p className="text-white text-xl">{memberCount}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-slate-700/50 rounded-lg">
+              <Users className="w-5 h-5 text-slate-300" />
             </div>
             <div>
               <p className="text-slate-400 text-sm">Creado por</p>
@@ -147,7 +160,7 @@ export default function Project() {
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h2 className="text-xl text-white mb-4">Información general</h2>
+        <h2 className="text-xl text-white mb-4">Información general del proyecto</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="p-4 bg-slate-800/50 rounded-lg">
@@ -161,13 +174,13 @@ export default function Project() {
           </div>
 
           <div className="p-4 bg-slate-800/50 rounded-lg">
-            <p className="text-slate-400 text-sm mb-1">Responsable de creación</p>
+            <p className="text-slate-400 text-sm mb-1">Responsable de registro</p>
             <p className="text-white">{creatorName}</p>
             <p className="text-slate-500 text-sm mt-1">{creatorRole}</p>
           </div>
 
           <div className="p-4 bg-slate-800/50 rounded-lg">
-            <p className="text-slate-400 text-sm mb-1">Registro del proyecto</p>
+            <p className="text-slate-400 text-sm mb-1">Fecha de registro</p>
             <p className="text-white">{formatDate(project.created_at)}</p>
           </div>
         </div>
@@ -176,7 +189,7 @@ export default function Project() {
           onClick={() => navigate(`/kanban/${project.id}`)}
           className="w-full mt-6 py-3 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all border border-slate-700"
         >
-          Ver tablero Kanban
+          Abrir tablero Kanban
         </button>
       </div>
     </div>

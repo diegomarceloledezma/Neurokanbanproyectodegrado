@@ -10,6 +10,14 @@ export type MemberTaskItem = {
   actual_hours?: number | null;
 };
 
+export type MemberSkillItem = {
+  skill_name: string;
+  category?: string | null;
+  level: number;
+  years_experience: number;
+  verified_by_leader: boolean;
+};
+
 export type MemberProfileResponse = {
   id: number;
   full_name: string;
@@ -23,7 +31,9 @@ export type MemberProfileResponse = {
   completion_rate: number;
   current_load: number;
   availability: number;
+  project_capacity_hours?: number | null;
   experience_level?: number | null;
+  skills: MemberSkillItem[];
   active_task_items: MemberTaskItem[];
   completed_task_items: MemberTaskItem[];
 };

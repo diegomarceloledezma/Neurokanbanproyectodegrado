@@ -46,7 +46,9 @@ VALUES
 ('FastAPI', 'Backend', 1, 'APIs con Python'),
 ('UX/UI', 'Diseño', 2, 'Diseño de experiencia e interfaces'),
 ('Documentación', 'Gestión', 5, 'Redacción y documentación técnica'),
-('Investigación', 'Análisis', 5, 'Levantamiento y análisis de información');
+('Investigación', 'Análisis', 5, 'Levantamiento y análisis de información'),
+('Redacción', 'Comunicación', 5, 'Producción de textos y copy'),
+('Coordinación', 'Operaciones', 5, 'Gestión operativa y seguimiento');
 
 INSERT INTO user_skills (user_id, skill_id, level, years_experience, verified_by_leader)
 VALUES
@@ -57,7 +59,9 @@ VALUES
 (3, 2, 3, 1.0, true),
 (3, 3, 3, 1.0, true),
 (4, 5, 4, 2.0, true),
-(4, 6, 4, 2.0, true);
+(4, 6, 4, 2.0, true),
+(4, 7, 4, 2.0, true),
+(1, 8, 3, 1.2, true);
 
 INSERT INTO tasks (project_id, title, description, task_type, priority, complexity, status, estimated_hours, due_date, created_by, assigned_to)
 VALUES
@@ -68,7 +72,17 @@ VALUES
 INSERT INTO task_required_skills (task_id, skill_id, required_level)
 VALUES
 (1, 2, 3),
+(1, 3, 3),
 (2, 1, 3),
 (2, 4, 2),
 (3, 5, 3),
 (3, 6, 3);
+
+INSERT INTO assignment_decisions (task_id, assigned_to, assigned_by, source, strategy, recommendation_score, risk_level, reason, recommendation_used)
+VALUES
+(1, 3, 1, 'recommended', 'efficiency', 86.50, 'low', 'Buena disponibilidad y habilidades alineadas al backend.', true),
+(2, 2, 1, 'manual', 'balance', 72.00, 'low', 'Asignación manual por experiencia previa en interfaz.', false);
+
+INSERT INTO task_outcomes (task_id, finished_on_time, delay_hours, quality_score, had_rework, outcome_notes)
+VALUES
+(1, true, 0, 4, false, 'Buen desempeño en el diseño técnico inicial');

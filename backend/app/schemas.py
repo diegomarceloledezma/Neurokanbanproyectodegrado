@@ -1,6 +1,7 @@
+from datetime import date, datetime
 from typing import Optional
-from datetime import datetime, date
-from pydantic import BaseModel, EmailStr, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class RoleBase(BaseModel):
@@ -15,6 +16,35 @@ class AreaBase(BaseModel):
     id: int
     name: str
     description: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamBase(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    area: Optional[AreaBase] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SkillBase(BaseModel):
+    id: int
+    name: str
+    category: Optional[str] = None
+    description: Optional[str] = None
+    area: Optional[AreaBase] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class UserSkillResponse(BaseModel):
+    id: int
+    level: int
+    years_experience: float = 0
+    verified_by_leader: bool = False
+    skill: SkillBase
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -53,6 +83,17 @@ class TokenResponse(BaseModel):
     user: UserBase
 
 
+class ProjectMemberBase(BaseModel):
+    id: int
+    project_role: str
+    weekly_capacity_hours: Optional[float] = None
+    availability_percentage: Optional[float] = None
+    joined_at: datetime
+    user: Optional[UserBase] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProjectBase(BaseModel):
     id: int
     team_id: int
@@ -63,7 +104,18 @@ class ProjectBase(BaseModel):
     end_date: Optional[date] = None
     created_at: datetime
     area: Optional[AreaBase] = None
+    team: Optional[TeamBase] = None
     creator: Optional[UserBase] = None
+    members: list[ProjectMemberBase] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskRequiredSkillResponse(BaseModel):
+    id: int
+    skill_id: int
+    required_level: int
+    skill: Optional[SkillBase] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -84,8 +136,14 @@ class TaskBase(BaseModel):
     updated_at: datetime
     assignee: Optional[UserBase] = None
     creator: Optional[UserBase] = None
+    required_skills: list[TaskRequiredSkillResponse] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class TaskRequiredSkillCreate(BaseModel):
+    skill_id: int
+    required_level: int = Field(ge=1, le=5)
 
 
 class TaskCreate(BaseModel):
@@ -101,6 +159,7 @@ class TaskCreate(BaseModel):
     due_date: Optional[date] = None
     created_by: Optional[int] = None
     assigned_to: Optional[int] = None
+    required_skills: list[TaskRequiredSkillCreate] = Field(default_factory=list)
 
 
 class TaskAssignRequest(BaseModel):
@@ -111,6 +170,7 @@ class TaskAssignRequest(BaseModel):
     recommendation_score: Optional[float] = None
     risk_level: Optional[str] = None
     reason: Optional[str] = None
+    recommendation_used: bool = True
 
 
 class AssignmentHistoryItem(BaseModel):
@@ -123,6 +183,7 @@ class AssignmentHistoryItem(BaseModel):
     recommendation_score: Optional[float] = None
     risk_level: Optional[str] = None
     reason: Optional[str] = None
+    recommendation_used: bool = True
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -140,6 +201,14 @@ class MemberTaskItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MemberSkillItem(BaseModel):
+    skill_name: str
+    category: Optional[str] = None
+    level: int
+    years_experience: float = 0
+    verified_by_leader: bool = False
+
+
 class MemberProfileResponse(BaseModel):
     id: int
     full_name: str
@@ -153,9 +222,11 @@ class MemberProfileResponse(BaseModel):
     completion_rate: float
     current_load: float
     availability: float
+    project_capacity_hours: Optional[float] = None
     experience_level: Optional[float] = None
-    active_task_items: list[MemberTaskItem]
-    completed_task_items: list[MemberTaskItem]
+    skills: list[MemberSkillItem] = Field(default_factory=list)
+    active_task_items: list[MemberTaskItem] = Field(default_factory=list)
+    completed_task_items: list[MemberTaskItem] = Field(default_factory=list)
 
 
 class RecommendationMember(BaseModel):
@@ -175,7 +246,11 @@ class TaskRecommendationItem(BaseModel):
     current_load: str
     risk_level: str
     active_tasks: int
-    matching_skills: list[str] = []
+    matching_skills: list[str] = Field(default_factory=list)
+    workload_score: Optional[float] = None
+    skill_match_score: Optional[float] = None
+    availability_score: Optional[float] = None
+    performance_score: Optional[float] = None
 
 
 class TaskRecommendationResponse(BaseModel):
@@ -198,6 +273,7 @@ class TaskSimulationItem(BaseModel):
     current_active_tasks: int
     projected_active_tasks: int
     estimated_hours_impact: float
+    matching_skills: list[str] = Field(default_factory=list)
 
 
 class TaskSimulationResponse(BaseModel):

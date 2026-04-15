@@ -114,14 +114,6 @@ CREATE TABLE task_required_skills (
     UNIQUE(task_id, skill_id)
 );
 
-CREATE TABLE task_dependencies (
-    id BIGSERIAL PRIMARY KEY,
-    task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    depends_on_task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    UNIQUE(task_id, depends_on_task_id),
-    CHECK (task_id <> depends_on_task_id)
-);
-
 CREATE TABLE task_status_history (
     id BIGSERIAL PRIMARY KEY,
     task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -152,6 +144,7 @@ CREATE TABLE recommendations (
     availability_score NUMERIC(6,2),
     performance_score NUMERIC(6,2),
     risk_level VARCHAR(20),
+    strategy VARCHAR(30) NOT NULL DEFAULT 'balance',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (risk_level IN ('low', 'medium', 'high') OR risk_level IS NULL)
 );
@@ -159,11 +152,17 @@ CREATE TABLE recommendations (
 CREATE TABLE assignment_decisions (
     id BIGSERIAL PRIMARY KEY,
     task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    selected_user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    selected_by BIGINT REFERENCES users(id),
+    assigned_to BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    assigned_by BIGINT REFERENCES users(id),
+    source VARCHAR(30) NOT NULL DEFAULT 'manual',
+    strategy VARCHAR(30),
+    recommendation_score NUMERIC(6,2),
+    risk_level VARCHAR(20),
+    reason TEXT,
     recommendation_used BOOLEAN NOT NULL DEFAULT TRUE,
-    notes TEXT,
-    decided_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (risk_level IN ('low', 'medium', 'high') OR risk_level IS NULL),
+    CHECK (source IN ('manual', 'recommended', 'simulated', 'hybrid'))
 );
 
 CREATE TABLE task_outcomes (

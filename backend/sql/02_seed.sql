@@ -78,10 +78,24 @@ VALUES
 (3, 5, 3),
 (3, 6, 3);
 
-INSERT INTO assignment_decisions (task_id, assigned_to, assigned_by, source, strategy, recommendation_score, risk_level, reason, recommendation_used)
+INSERT INTO assignment_decisions (
+    task_id, assigned_to, assigned_by, source, strategy, recommendation_score, risk_level, reason, recommendation_used,
+    workload_score, skill_match_score, availability_score, performance_score,
+    current_load_snapshot, availability_snapshot, active_tasks_snapshot,
+    required_skills_count, matching_skills_count, estimated_hours_snapshot,
+    priority_snapshot, complexity_snapshot
+)
 VALUES
-(1, 3, 1, 'recommended', 'efficiency', 86.50, 'low', 'Buena disponibilidad y habilidades alineadas al backend.', true),
-(2, 2, 1, 'manual', 'balance', 72.00, 'low', 'Asignación manual por experiencia previa en interfaz.', false);
+(1, 3, 1, 'recommended', 'efficiency', 86.50, 'low', 'Buena disponibilidad y habilidades alineadas al backend.', true,
+ 78.00, 84.00, 75.00, 72.00,
+ 25.00, 75.00, 1,
+ 2, 2, 8.00,
+ 'high', 4),
+(2, 2, 1, 'manual', 'balance', 72.00, 'low', 'Asignación manual por experiencia previa en interfaz.', false,
+ 70.00, 80.00, 80.00, 68.00,
+ 20.00, 80.00, 1,
+ 2, 2, 4.00,
+ 'medium', 2);
 
 INSERT INTO task_outcomes (task_id, finished_on_time, delay_hours, quality_score, had_rework, outcome_notes)
 VALUES

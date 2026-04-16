@@ -223,6 +223,18 @@ class AssignmentHistoryDetailedItem(BaseModel):
     risk_level: Optional[str] = None
     reason: Optional[str] = None
     recommendation_used: bool = True
+    workload_score: Optional[float] = None
+    skill_match_score: Optional[float] = None
+    availability_score: Optional[float] = None
+    performance_score: Optional[float] = None
+    current_load_snapshot: Optional[float] = None
+    availability_snapshot: Optional[float] = None
+    active_tasks_snapshot: Optional[int] = None
+    required_skills_count: Optional[int] = None
+    matching_skills_count: Optional[int] = None
+    estimated_hours_snapshot: Optional[float] = None
+    priority_snapshot: Optional[str] = None
+    complexity_snapshot: Optional[int] = None
     created_at: datetime
     task: AssignmentHistoryTaskSummary
     assigned_user: AssignmentHistoryUserSummary
@@ -335,3 +347,54 @@ class TaskInsightResponse(BaseModel):
     confidence_level: str
     detected_signals: list[str]
     explanation: str
+
+
+class TaskOutcomeCreate(BaseModel):
+    finished_on_time: Optional[bool] = None
+    delay_hours: float = 0
+    quality_score: Optional[int] = Field(default=None, ge=1, le=5)
+    had_rework: bool = False
+    outcome_notes: Optional[str] = None
+
+
+class TaskOutcomeResponse(BaseModel):
+    id: int
+    task_id: int
+    finished_on_time: Optional[bool] = None
+    delay_hours: float = 0
+    quality_score: Optional[int] = None
+    had_rework: bool = False
+    outcome_notes: Optional[str] = None
+    recorded_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TrainingDatasetRow(BaseModel):
+    assignment_decision_id: int
+    task_id: int
+    project_id: int
+    assigned_to: int
+    source: str
+    strategy: Optional[str] = None
+    recommendation_used: bool
+    recommendation_score: Optional[float] = None
+    workload_score: Optional[float] = None
+    skill_match_score: Optional[float] = None
+    availability_score: Optional[float] = None
+    performance_score: Optional[float] = None
+    current_load_snapshot: Optional[float] = None
+    availability_snapshot: Optional[float] = None
+    active_tasks_snapshot: Optional[int] = None
+    required_skills_count: Optional[int] = None
+    matching_skills_count: Optional[int] = None
+    matching_ratio: Optional[float] = None
+    estimated_hours_snapshot: Optional[float] = None
+    priority_snapshot: Optional[str] = None
+    complexity_snapshot: Optional[int] = None
+    finished_on_time: Optional[bool] = None
+    delay_hours: Optional[float] = None
+    quality_score: Optional[int] = None
+    had_rework: Optional[bool] = None
+    success_score: float
+    success_label: int

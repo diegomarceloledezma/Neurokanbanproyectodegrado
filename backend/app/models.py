@@ -320,6 +320,20 @@ class TaskAssignmentHistory(Base):
     risk_level = Column(String(20))
     reason = Column(Text)
     recommendation_used = Column(Boolean, nullable=False, default=True)
+
+    workload_score = Column(Numeric(6, 2))
+    skill_match_score = Column(Numeric(6, 2))
+    availability_score = Column(Numeric(6, 2))
+    performance_score = Column(Numeric(6, 2))
+    current_load_snapshot = Column(Numeric(6, 2))
+    availability_snapshot = Column(Numeric(6, 2))
+    active_tasks_snapshot = Column(Integer)
+    required_skills_count = Column(Integer)
+    matching_skills_count = Column(Integer)
+    estimated_hours_snapshot = Column(Numeric(6, 2))
+    priority_snapshot = Column(String(20))
+    complexity_snapshot = Column(Integer)
+
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     task = relationship("Task", back_populates="assignment_history")

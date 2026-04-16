@@ -142,6 +142,42 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
             2,
         )
 
+    on_time_rows = (
+        db.query(TaskOutcome)
+        .join(Task, Task.id == TaskOutcome.task_id)
+        .filter(Task.assigned_to == member.id, TaskOutcome.finished_on_time.isnot(None))
+        .all()
+    )
+
+    on_time_rate = 0.0
+    if on_time_rows:
+        on_time_rate = round(
+            (
+                sum(1 for row in on_time_rows if row.finished_on_time)
+                / len(on_time_rows)
+            )
+            * 100,
+            2,
+        )
+
+    rework_rows = (
+        db.query(TaskOutcome)
+        .join(Task, Task.id == TaskOutcome.task_id)
+        .filter(Task.assigned_to == member.id, TaskOutcome.had_rework.isnot(None))
+        .all()
+    )
+
+    no_rework_rate = 100.0
+    if rework_rows:
+        no_rework_rate = round(
+            (
+                sum(1 for row in rework_rows if not row.had_rework)
+                / len(rework_rows)
+            )
+            * 100,
+            2,
+        )
+
     overdue_active_tasks = 0
     today = date.today()
     for task in active_tasks:
@@ -158,6 +194,8 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
         "capacity_hours": capacity_hours,
         "declared_availability": declared_availability,
         "avg_quality_score": avg_quality_score,
+        "on_time_rate": on_time_rate,
+        "no_rework_rate": no_rework_rate,
         "overdue_active_tasks": overdue_active_tasks,
     }
 
@@ -222,7 +260,15 @@ def calculate_component_scores(task: Task, metrics: dict, skill_match: dict):
     availability_score = _clamp(metrics["availability"])
 
     quality_component = metrics["avg_quality_score"] * 20 if metrics["avg_quality_score"] > 0 else 60
-    performance_score = _clamp(metrics["completion_rate"] * 0.7 + quality_component * 0.3)
+    on_time_component = metrics.get("on_time_rate", 0)
+    no_rework_component = metrics.get("no_rework_rate", 100)
+
+    performance_score = _clamp(
+        metrics["completion_rate"] * 0.40
+        + quality_component * 0.25
+        + on_time_component * 0.20
+        + no_rework_component * 0.15
+    )
 
     skill_match_score = _clamp(skill_match["score"])
 
@@ -324,14 +370,14 @@ def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str):
     if skill_match["required_count"] > 0:
         if skill_match["matching_skills"]:
             parts.append(
-                "coincidencia con skills requeridas: " + ", ".join(skill_match["matching_skills"][:3])
+                "coincidencia con habilidades requeridas: " + ", ".join(skill_match["matching_skills"][:3])
             )
         if skill_match["missing_skills"]:
             parts.append(
                 "brechas detectadas en: " + ", ".join(skill_match["missing_skills"][:2])
             )
     else:
-        parts.append("no hay skills requeridas registradas, se priorizó capacidad operativa")
+        parts.append("no hay habilidades requeridas registradas, se priorizó capacidad operativa")
 
     if metrics["availability"] >= 70:
         parts.append(f"alta disponibilidad ({metrics['availability']}%)")
@@ -354,7 +400,7 @@ def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str):
     elif strategy == "learning":
         parts.append("la estrategia evalúa potencial de aprendizaje sin perder viabilidad")
     else:
-        parts.append("la estrategia busca equilibrio entre capacidad, skills y desempeño")
+        parts.append("la estrategia busca equilibrio entre capacidad, habilidades y desempeño")
 
     return "Se recomienda porque presenta " + "; ".join(parts) + "."
 
@@ -376,6 +422,85 @@ def project_member_projection(task: Task, metrics: dict):
         "current_load": projected_load,
         "availability": projected_availability,
         "estimated_hours_impact": round(estimated_hours_impact, 2),
+    }
+
+
+def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: int, strategy: str | None = None):
+    user = (
+        db.query(User)
+        .options(
+            joinedload(User.global_role),
+            joinedload(User.user_skills).joinedload(UserSkill.skill),
+            joinedload(User.project_memberships),
+        )
+        .filter(User.id == assigned_user_id, User.is_active.is_(True))
+        .first()
+    )
+
+    if not user:
+        return None
+
+    project_membership = (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == task.project_id,
+            ProjectMember.user_id == assigned_user_id,
+        )
+        .first()
+    )
+
+    if not project_membership:
+        return None
+
+    metrics = calculate_member_metrics(db, user, project_membership)
+    skill_match = calculate_skill_match(task, user)
+    components = calculate_component_scores(task, metrics, skill_match)
+
+    recommendation_query = db.query(Recommendation).filter(
+        Recommendation.task_id == task.id,
+        Recommendation.recommended_user_id == assigned_user_id,
+    )
+
+    if strategy:
+        recommendation_query = recommendation_query.filter(Recommendation.strategy == strategy)
+
+    latest_recommendation = recommendation_query.order_by(Recommendation.created_at.desc()).first()
+
+    return {
+        "workload_score": (
+            float(latest_recommendation.workload_score)
+            if latest_recommendation and latest_recommendation.workload_score is not None
+            else components["workload_score"]
+        ),
+        "skill_match_score": (
+            float(latest_recommendation.skill_match_score)
+            if latest_recommendation and latest_recommendation.skill_match_score is not None
+            else components["skill_match_score"]
+        ),
+        "availability_score": (
+            float(latest_recommendation.availability_score)
+            if latest_recommendation and latest_recommendation.availability_score is not None
+            else components["availability_score"]
+        ),
+        "performance_score": (
+            float(latest_recommendation.performance_score)
+            if latest_recommendation and latest_recommendation.performance_score is not None
+            else components["performance_score"]
+        ),
+        "current_load_snapshot": float(metrics["current_load"]),
+        "availability_snapshot": float(metrics["availability"]),
+        "active_tasks_snapshot": int(metrics["active_tasks"]),
+        "required_skills_count": int(skill_match["required_count"]),
+        "matching_skills_count": int(len(skill_match["matching_skills"])),
+        "estimated_hours_snapshot": float(task.estimated_hours) if task.estimated_hours is not None else None,
+        "priority_snapshot": task.priority,
+        "complexity_snapshot": task.complexity,
+        "recommendation_score": (
+            float(latest_recommendation.score)
+            if latest_recommendation and latest_recommendation.score is not None
+            else None
+        ),
+        "risk_level": latest_recommendation.risk_level if latest_recommendation else None,
     }
 
 

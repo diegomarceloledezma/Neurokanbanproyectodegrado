@@ -454,7 +454,10 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
 
     metrics = calculate_member_metrics(db, user, project_membership)
     skill_match = calculate_skill_match(task, user)
-    components = calculate_component_scores(task, metrics, skill_match)
+
+    chosen_strategy = strategy if strategy in ALLOWED_STRATEGIES else "balance"
+    calculated_score, calculated_components = calculate_score(task, metrics, skill_match, chosen_strategy)
+    calculated_risk = calculate_risk(task, metrics, skill_match, chosen_strategy)
 
     recommendation_query = db.query(Recommendation).filter(
         Recommendation.task_id == task.id,
@@ -470,22 +473,22 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
         "workload_score": (
             float(latest_recommendation.workload_score)
             if latest_recommendation and latest_recommendation.workload_score is not None
-            else components["workload_score"]
+            else calculated_components["workload_score"]
         ),
         "skill_match_score": (
             float(latest_recommendation.skill_match_score)
             if latest_recommendation and latest_recommendation.skill_match_score is not None
-            else components["skill_match_score"]
+            else calculated_components["skill_match_score"]
         ),
         "availability_score": (
             float(latest_recommendation.availability_score)
             if latest_recommendation and latest_recommendation.availability_score is not None
-            else components["availability_score"]
+            else calculated_components["availability_score"]
         ),
         "performance_score": (
             float(latest_recommendation.performance_score)
             if latest_recommendation and latest_recommendation.performance_score is not None
-            else components["performance_score"]
+            else calculated_components["performance_score"]
         ),
         "current_load_snapshot": float(metrics["current_load"]),
         "availability_snapshot": float(metrics["availability"]),
@@ -498,9 +501,9 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
         "recommendation_score": (
             float(latest_recommendation.score)
             if latest_recommendation and latest_recommendation.score is not None
-            else None
+            else float(calculated_score)
         ),
-        "risk_level": latest_recommendation.risk_level if latest_recommendation else None,
+        "risk_level": latest_recommendation.risk_level if latest_recommendation else calculated_risk,
     }
 
 

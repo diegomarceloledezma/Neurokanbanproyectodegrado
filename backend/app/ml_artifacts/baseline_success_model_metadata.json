@@ -1,0 +1,146 @@
+{
+  "model_type": "LogisticRegression",
+  "target": "success_label",
+  "project_id": 11,
+  "project_name": "NeuroKanban MVP - Dataset sintético IA 20260416_154907",
+  "dataset_rows": 200,
+  "train_rows": 150,
+  "test_rows": 50,
+  "label_distribution": {
+    "1": 107,
+    "0": 93
+  },
+  "test_size": 0.25,
+  "random_state": 42,
+  "metrics": {
+    "accuracy": 0.68,
+    "precision": 0.7391,
+    "recall": 0.6296,
+    "f1": 0.68,
+    "roc_auc": 0.8019
+  },
+  "numeric_features": [
+    "recommendation_score",
+    "workload_score",
+    "skill_match_score",
+    "availability_score",
+    "performance_score",
+    "current_load_snapshot",
+    "availability_snapshot",
+    "active_tasks_snapshot",
+    "required_skills_count",
+    "matching_skills_count",
+    "matching_ratio",
+    "estimated_hours_snapshot",
+    "complexity_snapshot"
+  ],
+  "categorical_features": [
+    "source",
+    "strategy",
+    "priority_snapshot"
+  ],
+  "top_coefficients": [
+    {
+      "feature": "cat__strategy_learning",
+      "coefficient": -0.692368,
+      "absolute_weight": 0.692368
+    },
+    {
+      "feature": "num__matching_skills_count",
+      "coefficient": 0.543501,
+      "absolute_weight": 0.543501
+    },
+    {
+      "feature": "cat__strategy_urgency",
+      "coefficient": 0.414856,
+      "absolute_weight": 0.414856
+    },
+    {
+      "feature": "num__active_tasks_snapshot",
+      "coefficient": -0.303857,
+      "absolute_weight": 0.303857
+    },
+    {
+      "feature": "cat__priority_snapshot_high",
+      "coefficient": -0.297379,
+      "absolute_weight": 0.297379
+    },
+    {
+      "feature": "cat__source_recommended",
+      "coefficient": 0.244295,
+      "absolute_weight": 0.244295
+    },
+    {
+      "feature": "cat__source_manual",
+      "coefficient": -0.241114,
+      "absolute_weight": 0.241114
+    },
+    {
+      "feature": "num__complexity_snapshot",
+      "coefficient": -0.20979,
+      "absolute_weight": 0.20979
+    },
+    {
+      "feature": "cat__priority_snapshot_medium",
+      "coefficient": 0.195933,
+      "absolute_weight": 0.195933
+    },
+    {
+      "feature": "cat__strategy_efficiency",
+      "coefficient": 0.173688,
+      "absolute_weight": 0.173688
+    },
+    {
+      "feature": "cat__priority_snapshot_low",
+      "coefficient": 0.148425,
+      "absolute_weight": 0.148425
+    },
+    {
+      "feature": "num__estimated_hours_snapshot",
+      "coefficient": -0.100025,
+      "absolute_weight": 0.100025
+    },
+    {
+      "feature": "cat__strategy_balance",
+      "coefficient": 0.098236,
+      "absolute_weight": 0.098236
+    },
+    {
+      "feature": "num__required_skills_count",
+      "coefficient": -0.076605,
+      "absolute_weight": 0.076605
+    },
+    {
+      "feature": "num__matching_ratio",
+      "coefficient": 0.063006,
+      "absolute_weight": 0.063006
+    }
+  ],
+  "classification_report": {
+    "0": {
+      "precision": 0.6296296296296297,
+      "recall": 0.7391304347826086,
+      "f1-score": 0.68,
+      "support": 23.0
+    },
+    "1": {
+      "precision": 0.7391304347826086,
+      "recall": 0.6296296296296297,
+      "f1-score": 0.68,
+      "support": 27.0
+    },
+    "accuracy": 0.68,
+    "macro avg": {
+      "precision": 0.6843800322061191,
+      "recall": 0.6843800322061191,
+      "f1-score": 0.68,
+      "support": 50.0
+    },
+    "weighted avg": {
+      "precision": 0.6887600644122384,
+      "recall": 0.68,
+      "f1-score": 0.68,
+      "support": 50.0
+    }
+  }
+}

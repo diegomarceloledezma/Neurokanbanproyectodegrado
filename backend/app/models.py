@@ -9,19 +9,20 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
+    func,
 )
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.orm import declarative_base, relationship
 
-from app.db import Base
+Base = declarative_base()
 
 
 class Role(Base):
     __tablename__ = "roles"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    name = Column(String(50), nullable=False, unique=True)
-    description = Column(Text)
+    name = Column(String(50), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
 
     users = relationship("User", back_populates="global_role")
 
@@ -30,8 +31,8 @@ class Area(Base):
     __tablename__ = "areas"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    name = Column(String(100), nullable=False, unique=True)
-    description = Column(Text)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
 
     teams = relationship("Team", back_populates="area")
     projects = relationship("Project", back_populates="area")
@@ -42,16 +43,12 @@ class Team(Base):
     __tablename__ = "teams"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    name = Column(String(150), nullable=False)
-    description = Column(Text)
-    area_id = Column(BigInteger, ForeignKey("areas.id"))
-    created_by = Column(BigInteger, ForeignKey("users.id"))
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    name = Column(String(120), nullable=False)
+    description = Column(Text, nullable=True)
+    area_id = Column(BigInteger, ForeignKey("areas.id", ondelete="SET NULL"), nullable=True)
 
     area = relationship("Area", back_populates="teams")
-    creator = relationship("User", back_populates="created_teams")
-    members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
-    projects = relationship("Project", back_populates="team", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="team")
 
 
 class User(Base):
@@ -59,96 +56,62 @@ class User(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     full_name = Column(String(150), nullable=False)
-    username = Column(String(80), nullable=False, unique=True)
-    email = Column(String(150), nullable=False, unique=True)
-    password_hash = Column(Text, nullable=False)
-    avatar_url = Column(Text)
-    global_role_id = Column(BigInteger, ForeignKey("roles.id"))
-    is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    username = Column(String(80), unique=True, nullable=False, index=True)
+    email = Column(String(150), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    avatar_url = Column(Text, nullable=True)
+    global_role_id = Column(BigInteger, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, server_default="true")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
-        DateTime,
-        nullable=False,
+        DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+        nullable=False,
     )
 
     global_role = relationship("Role", back_populates="users")
-
-    created_teams = relationship("Team", back_populates="creator")
-    team_memberships = relationship("TeamMember", back_populates="user", cascade="all, delete-orphan")
-
     created_projects = relationship("Project", back_populates="creator")
-    project_memberships = relationship("ProjectMember", back_populates="user", cascade="all, delete-orphan")
-
-    assigned_tasks = relationship("Task", back_populates="assignee", foreign_keys="Task.assigned_to")
-    created_tasks = relationship("Task", back_populates="creator", foreign_keys="Task.created_by")
-
+    project_memberships = relationship("ProjectMember", back_populates="user")
+    created_tasks = relationship("Task", foreign_keys="Task.created_by", back_populates="creator")
+    assigned_tasks = relationship("Task", foreign_keys="Task.assigned_to", back_populates="assignee")
     user_skills = relationship("UserSkill", back_populates="user", cascade="all, delete-orphan")
-    work_logs = relationship("WorkLog", back_populates="user", cascade="all, delete-orphan")
-
-    recommendation_records = relationship(
-        "Recommendation",
-        back_populates="member",
-        foreign_keys="Recommendation.recommended_user_id",
-        cascade="all, delete-orphan",
-    )
-    assignment_history_received = relationship(
-        "TaskAssignmentHistory",
-        back_populates="assigned_user",
-        foreign_keys="TaskAssignmentHistory.assigned_to",
-    )
-    assignment_history_made = relationship(
-        "TaskAssignmentHistory",
-        back_populates="assigned_by_user",
-        foreign_keys="TaskAssignmentHistory.assigned_by",
-    )
-
-
-class TeamMember(Base):
-    __tablename__ = "team_members"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    team_id = Column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role_in_team = Column(String(50), nullable=False)
-    joined_at = Column(DateTime, nullable=False, server_default=func.now())
-
-    team = relationship("Team", back_populates="members")
-    user = relationship("User", back_populates="team_memberships")
 
 
 class Project(Base):
     __tablename__ = "projects"
 
     id = Column(BigInteger, primary_key=True, index=True)
-    team_id = Column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
-    area_id = Column(BigInteger, ForeignKey("areas.id"))
-    name = Column(String(150), nullable=False)
-    description = Column(Text)
-    status = Column(String(30), nullable=False, default="active")
-    start_date = Column(Date)
-    end_date = Column(Date)
-    created_by = Column(BigInteger, ForeignKey("users.id"))
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    team_id = Column(BigInteger, ForeignKey("teams.id", ondelete="RESTRICT"), nullable=False)
+    area_id = Column(BigInteger, ForeignKey("areas.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(180), nullable=False)
+    description = Column(Text, nullable=True)
+    status = Column(String(30), nullable=False, default="active", server_default="active")
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     team = relationship("Team", back_populates="projects")
     area = relationship("Area", back_populates="projects")
     creator = relationship("User", back_populates="created_projects")
-    tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     members = relationship("ProjectMember", back_populates="project", cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
 
 
 class ProjectMember(Base):
     __tablename__ = "project_members"
+    __table_args__ = (
+        UniqueConstraint("project_id", "user_id", name="uq_project_members_project_user"),
+    )
 
     id = Column(BigInteger, primary_key=True, index=True)
     project_id = Column(BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    project_role = Column(String(80), nullable=False)
-    weekly_capacity_hours = Column(Numeric(5, 2), nullable=False, default=40)
-    availability_percentage = Column(Numeric(5, 2), nullable=False, default=100)
-    joined_at = Column(DateTime, nullable=False, server_default=func.now())
+    project_role = Column(String(100), nullable=False)
+    weekly_capacity_hours = Column(Numeric(5, 2), nullable=True)
+    availability_percentage = Column(Numeric(5, 2), nullable=True)
+    joined_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     project = relationship("Project", back_populates="members")
     user = relationship("User", back_populates="project_memberships")
@@ -159,9 +122,9 @@ class Skill(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     name = Column(String(120), nullable=False, unique=True)
-    category = Column(String(100))
-    area_id = Column(BigInteger, ForeignKey("areas.id"))
-    description = Column(Text)
+    category = Column(String(100), nullable=True)
+    area_id = Column(BigInteger, ForeignKey("areas.id", ondelete="SET NULL"), nullable=True)
+    description = Column(Text, nullable=True)
 
     area = relationship("Area", back_populates="skills")
     user_skills = relationship("UserSkill", back_populates="skill", cascade="all, delete-orphan")
@@ -174,14 +137,17 @@ class Skill(Base):
 
 class UserSkill(Base):
     __tablename__ = "user_skills"
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_id", name="uq_user_skills_user_skill"),
+    )
 
     id = Column(BigInteger, primary_key=True, index=True)
     user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     skill_id = Column(BigInteger, ForeignKey("skills.id", ondelete="CASCADE"), nullable=False)
     level = Column(Integer, nullable=False)
-    years_experience = Column(Numeric(4, 1), nullable=False, default=0)
-    verified_by_leader = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    years_experience = Column(Numeric(5, 2), nullable=True, default=0)
+    verified_by_leader = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     user = relationship("User", back_populates="user_skills")
     skill = relationship("Skill", back_populates="user_skills")
@@ -192,39 +158,33 @@ class Task(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     project_id = Column(BigInteger, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    title = Column(String(180), nullable=False)
-    description = Column(Text)
+    title = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
     task_type = Column(String(50), nullable=False)
-    priority = Column(String(20), nullable=False, default="medium")
+    priority = Column(String(20), nullable=False, default="medium", server_default="medium")
     complexity = Column(Integer, nullable=False)
-    status = Column(String(30), nullable=False, default="pending")
-    estimated_hours = Column(Numeric(6, 2))
-    actual_hours = Column(Numeric(6, 2), default=0)
-    due_date = Column(Date)
-    created_by = Column(BigInteger, ForeignKey("users.id"))
-    assigned_to = Column(BigInteger, ForeignKey("users.id"))
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    status = Column(String(30), nullable=False, default="pending", server_default="pending")
+    estimated_hours = Column(Numeric(7, 2), nullable=True)
+    actual_hours = Column(Numeric(7, 2), nullable=True)
+    due_date = Column(Date, nullable=True)
+    created_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_to = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
-        DateTime,
-        nullable=False,
+        DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+        nullable=False,
     )
 
     project = relationship("Project", back_populates="tasks")
-    assignee = relationship("User", back_populates="assigned_tasks", foreign_keys=[assigned_to])
-    creator = relationship("User", back_populates="created_tasks", foreign_keys=[created_by])
+    creator = relationship("User", foreign_keys=[created_by], back_populates="created_tasks")
+    assignee = relationship("User", foreign_keys=[assigned_to], back_populates="assigned_tasks")
     required_skills = relationship(
         "TaskRequiredSkill",
         back_populates="task",
         cascade="all, delete-orphan",
     )
-    status_history = relationship(
-        "TaskStatusHistory",
-        back_populates="task",
-        cascade="all, delete-orphan",
-    )
-    work_logs = relationship("WorkLog", back_populates="task", cascade="all, delete-orphan")
     recommendations = relationship(
         "Recommendation",
         back_populates="task",
@@ -245,6 +205,9 @@ class Task(Base):
 
 class TaskRequiredSkill(Base):
     __tablename__ = "task_required_skills"
+    __table_args__ = (
+        UniqueConstraint("task_id", "skill_id", name="uq_task_required_skills_task_skill"),
+    )
 
     id = Column(BigInteger, primary_key=True, index=True)
     task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
@@ -255,56 +218,27 @@ class TaskRequiredSkill(Base):
     skill = relationship("Skill", back_populates="task_required_skills")
 
 
-class TaskStatusHistory(Base):
-    __tablename__ = "task_status_history"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
-    old_status = Column(String(30))
-    new_status = Column(String(30), nullable=False)
-    changed_by = Column(BigInteger, ForeignKey("users.id"))
-    changed_at = Column(DateTime, nullable=False, server_default=func.now())
-
-    task = relationship("Task", back_populates="status_history")
-
-
-class WorkLog(Base):
-    __tablename__ = "work_logs"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    hours_logged = Column(Numeric(6, 2), nullable=False)
-    notes = Column(Text)
-    logged_at = Column(DateTime, nullable=False, server_default=func.now())
-
-    task = relationship("Task", back_populates="work_logs")
-    user = relationship("User", back_populates="work_logs")
-
-
 class Recommendation(Base):
     __tablename__ = "recommendations"
 
     id = Column(BigInteger, primary_key=True, index=True)
     task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
     recommended_user_id = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    score = Column(Numeric(6, 2), nullable=False)
+    score = Column(Numeric(5, 2), nullable=False)
     rank_position = Column(Integer, nullable=False)
-    reason_summary = Column(Text)
-    workload_score = Column(Numeric(6, 2))
-    skill_match_score = Column(Numeric(6, 2))
-    availability_score = Column(Numeric(6, 2))
-    performance_score = Column(Numeric(6, 2))
-    risk_level = Column(String(20))
-    strategy = Column(String(30), nullable=False, default="balance")
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    reason_summary = Column(Text, nullable=True)
+
+    workload_score = Column(Numeric(5, 2), nullable=True)
+    skill_match_score = Column(Numeric(5, 2), nullable=True)
+    availability_score = Column(Numeric(5, 2), nullable=True)
+    performance_score = Column(Numeric(5, 2), nullable=True)
+
+    risk_level = Column(String(20), nullable=True)
+    strategy = Column(String(30), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     task = relationship("Task", back_populates="recommendations")
-    member = relationship(
-        "User",
-        back_populates="recommendation_records",
-        foreign_keys=[recommended_user_id],
-    )
+    recommended_user = relationship("User")
 
 
 class TaskAssignmentHistory(Base):
@@ -312,53 +246,55 @@ class TaskAssignmentHistory(Base):
 
     id = Column(BigInteger, primary_key=True, index=True)
     task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
-    assigned_to = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    assigned_by = Column(BigInteger, ForeignKey("users.id"))
-    source = Column(String(30), nullable=False, default="manual")
-    strategy = Column(String(30))
-    recommendation_score = Column(Numeric(6, 2))
-    risk_level = Column(String(20))
-    reason = Column(Text)
-    recommendation_used = Column(Boolean, nullable=False, default=True)
+    assigned_to = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    assigned_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    workload_score = Column(Numeric(6, 2))
-    skill_match_score = Column(Numeric(6, 2))
-    availability_score = Column(Numeric(6, 2))
-    performance_score = Column(Numeric(6, 2))
-    current_load_snapshot = Column(Numeric(6, 2))
-    availability_snapshot = Column(Numeric(6, 2))
-    active_tasks_snapshot = Column(Integer)
-    required_skills_count = Column(Integer)
-    matching_skills_count = Column(Integer)
-    estimated_hours_snapshot = Column(Numeric(6, 2))
-    priority_snapshot = Column(String(20))
-    complexity_snapshot = Column(Integer)
+    source = Column(String(20), nullable=False, default="manual", server_default="manual")
+    strategy = Column(String(30), nullable=True)
+    recommendation_score = Column(Numeric(5, 2), nullable=True)
+    risk_level = Column(String(20), nullable=True)
+    reason = Column(Text, nullable=True)
+    recommendation_used = Column(Boolean, nullable=False, default=True, server_default="true")
 
-    created_at = Column(DateTime, nullable=False, server_default=func.now())
+    workload_score = Column(Numeric(5, 2), nullable=True)
+    skill_match_score = Column(Numeric(5, 2), nullable=True)
+    availability_score = Column(Numeric(5, 2), nullable=True)
+    performance_score = Column(Numeric(5, 2), nullable=True)
+
+    current_load_snapshot = Column(Numeric(5, 2), nullable=True)
+    availability_snapshot = Column(Numeric(5, 2), nullable=True)
+    active_tasks_snapshot = Column(Integer, nullable=True)
+    required_skills_count = Column(Integer, nullable=True)
+    matching_skills_count = Column(Integer, nullable=True)
+    matching_ratio = Column(Numeric(5, 2), nullable=True)
+    estimated_hours_snapshot = Column(Numeric(7, 2), nullable=True)
+    priority_snapshot = Column(String(20), nullable=True)
+    complexity_snapshot = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     task = relationship("Task", back_populates="assignment_history")
-    assigned_user = relationship(
-        "User",
-        back_populates="assignment_history_received",
-        foreign_keys=[assigned_to],
-    )
-    assigned_by_user = relationship(
-        "User",
-        back_populates="assignment_history_made",
-        foreign_keys=[assigned_by],
-    )
+    assigned_user = relationship("User", foreign_keys=[assigned_to])
+    assigned_by_user = relationship("User", foreign_keys=[assigned_by])
 
 
 class TaskOutcome(Base):
     __tablename__ = "task_outcomes"
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_task_outcomes_task"),
+    )
 
     id = Column(BigInteger, primary_key=True, index=True)
-    task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, unique=True)
-    finished_on_time = Column(Boolean)
-    delay_hours = Column(Numeric(6, 2), nullable=False, default=0)
-    quality_score = Column(Integer)
-    had_rework = Column(Boolean, nullable=False, default=False)
-    outcome_notes = Column(Text)
-    recorded_at = Column(DateTime, nullable=False, server_default=func.now())
+    task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    finished_on_time = Column(Boolean, nullable=True)
+    delay_hours = Column(Numeric(7, 2), nullable=True)
+    quality_score = Column(Integer, nullable=True)
+    had_rework = Column(Boolean, nullable=False, default=False, server_default="false")
+    rework_count = Column(Integer, nullable=True, default=0)
+    success_score = Column(Numeric(5, 2), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column("recorded_at", DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     task = relationship("Task", back_populates="outcome")

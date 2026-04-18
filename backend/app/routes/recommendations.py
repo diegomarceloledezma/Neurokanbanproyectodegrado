@@ -8,6 +8,7 @@ from app.schemas import (
     TaskSimulationResponse,
 )
 from app.services.recommendation_engine import (
+    ALLOWED_MODES,
     ALLOWED_STRATEGIES,
     build_task_recommendations_response,
     build_task_simulation_response,
@@ -22,16 +23,19 @@ router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 def get_task_recommendations(
     task_id: int,
     strategy: str = Query(default="balance"),
+    mode: str = Query(default="hybrid"),
     db: Session = Depends(get_db),
 ):
     if strategy not in ALLOWED_STRATEGIES:
         raise HTTPException(status_code=400, detail="Estrategia no válida")
+    if mode not in ALLOWED_MODES:
+        raise HTTPException(status_code=400, detail="Modo no válido")
 
     task = load_task_or_none(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
-    response = build_task_recommendations_response(db, task, strategy)
+    response = build_task_recommendations_response(db, task, strategy, mode)
     if not response:
         raise HTTPException(status_code=404, detail="No hay integrantes disponibles para recomendar")
 
@@ -42,16 +46,19 @@ def get_task_recommendations(
 def get_task_simulation(
     task_id: int,
     strategy: str = Query(default="balance"),
+    mode: str = Query(default="hybrid"),
     db: Session = Depends(get_db),
 ):
     if strategy not in ALLOWED_STRATEGIES:
         raise HTTPException(status_code=400, detail="Estrategia no válida")
+    if mode not in ALLOWED_MODES:
+        raise HTTPException(status_code=400, detail="Modo no válido")
 
     task = load_task_or_none(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
-    response = build_task_simulation_response(db, task, strategy)
+    response = build_task_simulation_response(db, task, strategy, mode)
     if not response:
         raise HTTPException(status_code=404, detail="No hay integrantes disponibles para simular")
 

@@ -13,6 +13,7 @@ from app.routes.recommendations import router as recommendations_router
 from app.routes.skills import router as skills_router
 from app.routes.analytics import router as analytics_router
 from app.routes.ml_baseline import router as ml_baseline_router
+from app.routes.demo_setup import router as demo_setup_router
 
 app = FastAPI(title=APP_NAME)
 
@@ -36,6 +37,7 @@ app.include_router(recommendations_router)
 app.include_router(skills_router)
 app.include_router(analytics_router)
 app.include_router(ml_baseline_router)
+app.include_router(demo_setup_router)
 
 
 @app.get("/")

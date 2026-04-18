@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { Sparkles, User } from "lucide-react";
+import { BrainCircuit, Sparkles, User } from "lucide-react";
 import { getTaskById, assignTask, type TaskResponse } from "../services/taskService";
 import {
   getTaskInsights,
   getTaskRecommendations,
   getTaskSimulation,
+  type RecommendationMode,
   type TaskInsightResponse,
   type TaskRecommendationItem,
   type TaskRecommendationResponse,
@@ -23,6 +24,19 @@ const strategyOptions = [
   { value: "efficiency", label: "Eficiencia" },
   { value: "urgency", label: "Urgencia" },
   { value: "learning", label: "Aprendizaje" },
+];
+
+const modeOptions: Array<{ value: RecommendationMode; label: string; description: string }> = [
+  {
+    value: "heuristic",
+    label: "Heurístico",
+    description: "Usa reglas explicables basadas en carga, disponibilidad, habilidades y desempeño.",
+  },
+  {
+    value: "hybrid",
+    label: "Híbrido",
+    description: "Combina score heurístico con probabilidad de éxito estimada por el baseline.",
+  },
 ];
 
 const riskColors: Record<string, string> = {
@@ -58,7 +72,7 @@ const strategyLabels: Record<string, string> = {
 };
 
 const strategyDescriptions: Record<string, string> = {
-  balance: "Busca equilibrio entre carga, disponibilidad, skills y desempeño.",
+  balance: "Busca equilibrio entre carga, disponibilidad, habilidades y desempeño.",
   efficiency: "Prioriza el mejor rendimiento disponible para ejecutar la tarea.",
   urgency: "Favorece rapidez de respuesta y menor saturación para tareas urgentes.",
   learning: "Promueve desarrollo del equipo con riesgo controlado.",
@@ -100,6 +114,7 @@ export default function SmartRecommendation() {
   const [simulationData, setSimulationData] = useState<TaskSimulationResponse | null>(null);
   const [insightData, setInsightData] = useState<TaskInsightResponse | null>(null);
   const [selectedStrategy, setSelectedStrategy] = useState("balance");
+  const [selectedMode, setSelectedMode] = useState<RecommendationMode>("heuristic");
   const [loading, setLoading] = useState(true);
   const [reloadingAnalysis, setReloadingAnalysis] = useState(false);
   const [assigningMemberId, setAssigningMemberId] = useState<number | null>(null);
@@ -151,8 +166,8 @@ export default function SmartRecommendation() {
         setSuccessMessage("");
 
         const [recommendations, simulation, insights] = await Promise.all([
-          getTaskRecommendations(taskId, token, selectedStrategy),
-          getTaskSimulation(taskId, token, selectedStrategy),
+          getTaskRecommendations(taskId, token, selectedStrategy, selectedMode),
+          getTaskSimulation(taskId, token, selectedStrategy, selectedMode),
           getTaskInsights(taskId, token),
         ]);
 
@@ -168,7 +183,7 @@ export default function SmartRecommendation() {
     };
 
     loadAnalysis();
-  }, [taskId, selectedStrategy, navigate]);
+  }, [taskId, selectedStrategy, selectedMode, navigate]);
 
   const handleAssign = async (rec: TaskRecommendationItem) => {
     if (!taskId || !recommendationData) return;
@@ -241,6 +256,8 @@ export default function SmartRecommendation() {
     );
   }
 
+  const activeMode = modeOptions.find((option) => option.value === selectedMode);
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -252,7 +269,7 @@ export default function SmartRecommendation() {
             </span>
           </div>
           <p className="text-slate-400">
-            Evalúa a quién asignar la tarea con base en skills, carga, disponibilidad y estrategia.
+            Evalúa a quién asignar la tarea con base en habilidades, carga, disponibilidad y estrategia.
           </p>
         </div>
 
@@ -313,14 +330,14 @@ export default function SmartRecommendation() {
 
             {task.required_skills.length > 0 && (
               <div className="mt-5">
-                <p className="text-slate-500 text-xs mb-2">Skills requeridas</p>
+                <p className="text-slate-500 text-xs mb-2">Habilidades requeridas</p>
                 <div className="flex flex-wrap gap-2">
                   {task.required_skills.map((item) => (
                     <span
                       key={item.id}
                       className="px-3 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm"
                     >
-                      {item.skill?.name ?? `Skill ${item.skill_id}`} · nivel {item.required_level}
+                      {item.skill?.name ?? `Habilidad ${item.skill_id}`} · nivel {item.required_level}
                     </span>
                   ))}
                 </div>
@@ -336,17 +353,13 @@ export default function SmartRecommendation() {
         onApplySuggestedStrategy={handleApplySuggestedStrategy}
       />
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
-        <div className="flex flex-col md:flex-row md:items-end gap-4 md:justify-between">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div>
             <h2 className="text-xl text-white mb-2">Estrategia de asignación</h2>
-            <p className="text-slate-400 text-sm">
+            <p className="text-slate-400 text-sm mb-3">
               Elige el enfoque con el que quieres calcular la recomendación.
             </p>
-          </div>
-
-          <div className="min-w-[240px]">
-            <label className="block text-sm text-slate-300 mb-2">Estrategia</label>
             <select
               value={selectedStrategy}
               onChange={(e) => setSelectedStrategy(e.target.value)}
@@ -358,13 +371,50 @@ export default function SmartRecommendation() {
                 </option>
               ))}
             </select>
-          </div>
-        </div>
 
-        <div className="p-4 bg-slate-800/50 rounded-lg">
-          <p className="text-slate-300 text-sm">
-            {strategyDescriptions[selectedStrategy]}
-          </p>
+            <div className="mt-3 p-4 bg-slate-800/50 rounded-lg">
+              <p className="text-slate-300 text-sm">{strategyDescriptions[selectedStrategy]}</p>
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-xl text-white mb-2">Modo de recomendación</h2>
+            <p className="text-slate-400 text-sm mb-3">
+              Compara reglas explicables contra la capa híbrida con apoyo del modelo baseline.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {modeOptions.map((option) => {
+                const isActive = selectedMode === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setSelectedMode(option.value)}
+                    className={`text-left rounded-xl border px-4 py-4 transition-all ${
+                      isActive
+                        ? "border-cyan-500/50 bg-cyan-500/10 shadow-lg shadow-cyan-500/10"
+                        : "border-slate-700 bg-slate-800/50 hover:border-slate-600"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <BrainCircuit className={`w-4 h-4 ${isActive ? "text-cyan-300" : "text-slate-400"}`} />
+                      <p className={`text-sm ${isActive ? "text-cyan-200" : "text-white"}`}>
+                        {option.label}
+                      </p>
+                    </div>
+                    <p className="text-slate-400 text-xs">{option.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeMode && (
+              <div className="mt-3 p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+                <p className="text-slate-300 text-sm">{activeMode.description}</p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -376,11 +426,20 @@ export default function SmartRecommendation() {
         recommendationsCount={recommendationData?.recommendations.length ?? 0}
         simulationsCount={simulationData?.simulations.length ?? 0}
         urgencyLabel={daysRemaining(task.due_date)}
+        modeLabel={selectedMode === "hybrid" ? "Híbrido" : "Heurístico"}
+        modelActive={selectedMode === "hybrid" && Boolean(recommendationData?.recommendations?.some((rec) => rec.model_used))}
       />
 
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xl text-white">Top 3 integrantes recomendados</h2>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-xl text-white">Top 3 integrantes recomendados</h2>
+            <p className="text-slate-400 text-sm">
+              {selectedMode === "hybrid"
+                ? "Comparación final usando reglas explicables + probabilidad estimada por el baseline."
+                : "Comparación basada únicamente en reglas heurísticas explicables."}
+            </p>
+          </div>
           {reloadingAnalysis && (
             <span className="text-sm text-slate-400">Actualizando análisis...</span>
           )}
@@ -398,6 +457,7 @@ export default function SmartRecommendation() {
               roleLabels={roleLabels}
               riskColors={riskColors}
               riskLabels={riskLabels}
+              selectedMode={selectedMode}
             />
           ))
         ) : (
@@ -417,9 +477,13 @@ export default function SmartRecommendation() {
           </div>
           {simulationData && (
             <span className="text-sm text-slate-400">
-              Estrategia aplicada: {" "}
+              Estrategia aplicada:{" "}
               <span className="text-white">
                 {strategyLabels[simulationData.strategy] ?? simulationData.strategy}
+              </span>{" "}
+              · Modo:{" "}
+              <span className="text-white">
+                {simulationData.mode === "hybrid" ? "Híbrido" : "Heurístico"}
               </span>
             </span>
           )}
@@ -438,6 +502,7 @@ export default function SmartRecommendation() {
                 formatPercent={formatPercent}
                 getLoadChangeLabel={getLoadChangeLabel}
                 getActiveTasksChangeLabel={getActiveTasksChangeLabel}
+                selectedMode={selectedMode}
               />
             ))
           ) : (
@@ -454,8 +519,9 @@ export default function SmartRecommendation() {
           <div>
             <h3 className="text-white mb-2">Sobre esta recomendación</h3>
             <p className="text-slate-400 text-sm">
-              Esta vista ya interpreta la tarea, usa skills requeridas reales, compara escenarios
-              antes de decidir y registra la asignación final con trazabilidad para revisión futura.
+              Esta vista interpreta la tarea, usa habilidades requeridas reales, compara escenarios
+              antes de decidir y ahora también permite demostrar la diferencia entre el modo
+              heurístico y el modo híbrido con apoyo del modelo baseline.
             </p>
           </div>
         </div>

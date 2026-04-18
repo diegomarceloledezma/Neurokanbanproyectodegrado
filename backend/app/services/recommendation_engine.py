@@ -23,8 +23,16 @@ from app.schemas import (
     TaskSimulationItem,
     TaskSimulationResponse,
 )
+from app.services.ml_baseline_service import (
+    build_feature_payload,
+    load_baseline_model,
+    predict_success_probability_from_features,
+)
 
 ALLOWED_STRATEGIES = {"balance", "efficiency", "urgency", "learning"}
+ALLOWED_MODES = {"heuristic", "hybrid"}
+HEURISTIC_WEIGHT = 0.65
+BASELINE_WEIGHT = 0.35
 ACTIVE_STATUSES = {"pending", "in_progress", "review", "blocked"}
 COMPLETED_STATUSES = {"done"}
 
@@ -507,15 +515,95 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
     }
 
 
-def _rank_members(db: Session, task: Task, strategy: str):
+
+
+def _build_hybrid_evaluation(
+    *,
+    task: Task,
+    strategy: str,
+    heuristic_score: float,
+    metrics: dict,
+    skill_match: dict,
+    components: dict,
+    model,
+    mode: str,
+):
+    required_skills_count = int(skill_match.get("required_count", 0) or 0)
+    matching_skills_count = int(len(skill_match.get("matching_skills", [])))
+    matching_ratio = round((matching_skills_count / required_skills_count) * 100, 2) if required_skills_count > 0 else 0.0
+
+    if mode == "heuristic":
+        return {
+            "final_score": round(float(heuristic_score), 2),
+            "heuristic_score": round(float(heuristic_score), 2),
+            "ml_success_probability": None,
+            "hybrid_score": None,
+            "model_used": False,
+        }
+
+    feature_payload = build_feature_payload(
+        source="recommended",
+        strategy=strategy,
+        priority_snapshot=task.priority,
+        recommendation_score=float(heuristic_score),
+        workload_score=float(components["workload_score"]),
+        skill_match_score=float(components["skill_match_score"]),
+        availability_score=float(components["availability_score"]),
+        performance_score=float(components["performance_score"]),
+        current_load_snapshot=float(metrics["current_load"]),
+        availability_snapshot=float(metrics["availability"]),
+        active_tasks_snapshot=int(metrics["active_tasks"]),
+        required_skills_count=required_skills_count,
+        matching_skills_count=matching_skills_count,
+        matching_ratio=matching_ratio,
+        estimated_hours_snapshot=float(task.estimated_hours) if task.estimated_hours is not None else None,
+        complexity_snapshot=int(task.complexity),
+    )
+
+    ml_success_probability = predict_success_probability_from_features(feature_payload, model=model)
+    if ml_success_probability is None:
+        return {
+            "final_score": round(float(heuristic_score), 2),
+            "heuristic_score": round(float(heuristic_score), 2),
+            "ml_success_probability": None,
+            "hybrid_score": None,
+            "model_used": False,
+        }
+
+    hybrid_score = round(
+        (float(heuristic_score) * HEURISTIC_WEIGHT) + (float(ml_success_probability) * 100 * BASELINE_WEIGHT),
+        2,
+    )
+
+    return {
+        "final_score": hybrid_score,
+        "heuristic_score": round(float(heuristic_score), 2),
+        "ml_success_probability": round(float(ml_success_probability), 4),
+        "hybrid_score": hybrid_score,
+        "model_used": True,
+    }
+
+def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
     ranked_items: list[dict[str, Any]] = []
+    baseline_model = load_baseline_model() if mode == "hybrid" else None
 
     for member, membership in get_eligible_project_members(task):
         metrics = calculate_member_metrics(db, member, membership)
         skill_match = calculate_skill_match(task, member)
-        score, components = calculate_score(task, metrics, skill_match, strategy)
+        heuristic_score, components = calculate_score(task, metrics, skill_match, strategy)
         risk_level = calculate_risk(task, metrics, skill_match, strategy)
         reason = build_reason(task, metrics, skill_match, strategy)
+
+        hybrid_eval = _build_hybrid_evaluation(
+            task=task,
+            strategy=strategy,
+            heuristic_score=heuristic_score,
+            metrics=metrics,
+            skill_match=skill_match,
+            components=components,
+            model=baseline_model,
+            mode=mode,
+        )
 
         ranked_items.append(
             {
@@ -523,7 +611,11 @@ def _rank_members(db: Session, task: Task, strategy: str):
                 "membership": membership,
                 "metrics": metrics,
                 "skill_match": skill_match,
-                "score": score,
+                "score": hybrid_eval["final_score"],
+                "heuristic_score": hybrid_eval["heuristic_score"],
+                "ml_success_probability": hybrid_eval["ml_success_probability"],
+                "hybrid_score": hybrid_eval["hybrid_score"],
+                "model_used": hybrid_eval["model_used"],
                 "risk_level": risk_level,
                 "reason": reason,
                 **components,
@@ -571,8 +663,8 @@ def persist_recommendations(db: Session, task: Task, strategy: str, ranked_items
     db.commit()
 
 
-def build_task_recommendations_response(db: Session, task: Task, strategy: str):
-    ranked_items = _rank_members(db, task, strategy)
+def build_task_recommendations_response(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
+    ranked_items = _rank_members(db, task, strategy, mode)
     if not ranked_items:
         return None
 
@@ -594,6 +686,10 @@ def build_task_recommendations_response(db: Session, task: Task, strategy: str):
                 skill_match_score=item["skill_match_score"],
                 availability_score=item["availability_score"],
                 performance_score=item["performance_score"],
+                heuristic_score=item.get("heuristic_score"),
+                ml_success_probability=item.get("ml_success_probability"),
+                hybrid_score=item.get("hybrid_score"),
+                model_used=item.get("model_used", False),
             )
         )
 
@@ -601,12 +697,13 @@ def build_task_recommendations_response(db: Session, task: Task, strategy: str):
         task_id=task.id,
         task_title=task.title,
         strategy=strategy,
+        mode=mode,
         recommendations=response_items,
     )
 
 
-def build_task_simulation_response(db: Session, task: Task, strategy: str):
-    ranked_items = _rank_members(db, task, strategy)
+def build_task_simulation_response(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
+    ranked_items = _rank_members(db, task, strategy, mode)
     if not ranked_items:
         return None
 
@@ -628,6 +725,10 @@ def build_task_simulation_response(db: Session, task: Task, strategy: str):
                 projected_active_tasks=projected_metrics["active_tasks"],
                 estimated_hours_impact=projected_metrics["estimated_hours_impact"],
                 matching_skills=item["skill_match"]["matching_skills"],
+                heuristic_score=item.get("heuristic_score"),
+                ml_success_probability=item.get("ml_success_probability"),
+                hybrid_score=item.get("hybrid_score"),
+                model_used=item.get("model_used", False),
             )
         )
 
@@ -635,5 +736,6 @@ def build_task_simulation_response(db: Session, task: Task, strategy: str):
         task_id=task.id,
         task_title=task.title,
         strategy=strategy,
+        mode=mode,
         simulations=simulations,
     )

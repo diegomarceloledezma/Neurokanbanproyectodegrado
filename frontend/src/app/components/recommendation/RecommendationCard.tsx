@@ -1,5 +1,5 @@
-import { Sparkles } from "lucide-react";
-import type { TaskRecommendationItem } from "../../services/recommendationService";
+import { BrainCircuit, Sparkles } from "lucide-react";
+import type { RecommendationMode, TaskRecommendationItem } from "../../services/recommendationService";
 
 type RecommendationCardProps = {
   rec: TaskRecommendationItem;
@@ -10,7 +10,18 @@ type RecommendationCardProps = {
   roleLabels: Record<string, string>;
   riskColors: Record<string, string>;
   riskLabels: Record<string, string>;
+  selectedMode: RecommendationMode;
 };
+
+function formatProbability(value: number | null) {
+  if (value === null || value === undefined) return "No disponible";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatScore(value: number | null) {
+  if (value === null || value === undefined) return "No disponible";
+  return `${value.toFixed(2)}%`;
+}
 
 export default function RecommendationCard({
   rec,
@@ -21,6 +32,7 @@ export default function RecommendationCard({
   roleLabels,
   riskColors,
   riskLabels,
+  selectedMode,
 }: RecommendationCardProps) {
   return (
     <div
@@ -30,7 +42,7 @@ export default function RecommendationCard({
           : "border-slate-800 hover:border-slate-700"
       }`}
     >
-      <div className="flex items-start justify-between mb-4">
+      <div className="flex items-start justify-between mb-4 gap-4 flex-wrap">
         <div className="flex items-center gap-4">
           <div className="relative">
             <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-xl">
@@ -56,6 +68,11 @@ export default function RecommendationCard({
                   MEJOR COINCIDENCIA
                 </span>
               )}
+              {rec.model_used && (
+                <span className="px-2 py-1 bg-purple-500/15 text-purple-300 text-xs rounded border border-purple-500/30">
+                  HÍBRIDO + ML
+                </span>
+              )}
             </div>
             <p className="text-slate-400 text-sm">
               {roleLabels[rec.member.role_name] ?? rec.member.role_name}
@@ -69,7 +86,9 @@ export default function RecommendationCard({
               {rec.score}%
             </div>
           </div>
-          <p className="text-slate-400 text-sm">Puntaje de compatibilidad</p>
+          <p className="text-slate-400 text-sm">
+            {selectedMode === "hybrid" ? "Puntaje final híbrido" : "Puntaje heurístico"}
+          </p>
         </div>
       </div>
 
@@ -102,6 +121,26 @@ export default function RecommendationCard({
         <div className="p-3 bg-slate-800/30 rounded-lg">
           <p className="text-slate-400 text-xs mb-1">Tareas activas</p>
           <p className="text-white">{rec.active_tasks} tareas</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+        <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800">
+          <p className="text-slate-400 text-xs mb-1">Score heurístico</p>
+          <p className="text-white">{formatScore(rec.heuristic_score)}</p>
+        </div>
+
+        <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800">
+          <div className="flex items-center gap-2 mb-1">
+            <BrainCircuit className="w-4 h-4 text-purple-300" />
+            <p className="text-slate-400 text-xs">Probabilidad ML</p>
+          </div>
+          <p className="text-white">{formatProbability(rec.ml_success_probability)}</p>
+        </div>
+
+        <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800">
+          <p className="text-slate-400 text-xs mb-1">Score final híbrido</p>
+          <p className="text-white">{formatScore(rec.hybrid_score)}</p>
         </div>
       </div>
 

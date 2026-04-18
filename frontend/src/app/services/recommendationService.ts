@@ -1,5 +1,7 @@
 import { API_BASE_URL } from "../config";
 
+export type RecommendationMode = "heuristic" | "hybrid";
+
 export type RecommendationMember = {
   id: number;
   full_name: string;
@@ -16,12 +18,21 @@ export type TaskRecommendationItem = {
   risk_level: "low" | "medium" | "high";
   active_tasks: number;
   matching_skills: string[];
+  workload_score: number;
+  skill_match_score: number;
+  availability_score: number;
+  performance_score: number;
+  heuristic_score: number | null;
+  ml_success_probability: number | null;
+  hybrid_score: number | null;
+  model_used: boolean;
 };
 
 export type TaskRecommendationResponse = {
   task_id: number;
   task_title: string;
   strategy: string;
+  mode: RecommendationMode;
   recommendations: TaskRecommendationItem[];
 };
 
@@ -38,12 +49,18 @@ export type TaskSimulationItem = {
   current_active_tasks: number;
   projected_active_tasks: number;
   estimated_hours_impact: number;
+  matching_skills: string[];
+  heuristic_score: number | null;
+  ml_success_probability: number | null;
+  hybrid_score: number | null;
+  model_used: boolean;
 };
 
 export type TaskSimulationResponse = {
   task_id: number;
   task_title: string;
   strategy: string;
+  mode: RecommendationMode;
   simulations: TaskSimulationItem[];
 };
 
@@ -59,20 +76,33 @@ export type TaskInsightResponse = {
   explanation: string;
 };
 
+function buildRecommendationUrl(
+  taskId: string,
+  strategy: string,
+  mode: RecommendationMode,
+  simulation = false
+) {
+  const suffix = simulation ? "/simulation" : "";
+  const params = new URLSearchParams({
+    strategy,
+    mode,
+  });
+
+  return `${API_BASE_URL}/recommendations/tasks/${taskId}${suffix}?${params.toString()}`;
+}
+
 export async function getTaskRecommendations(
   taskId: string,
   token: string,
-  strategy = "balance"
+  strategy = "balance",
+  mode: RecommendationMode = "heuristic"
 ): Promise<TaskRecommendationResponse> {
-  const response = await fetch(
-    `${API_BASE_URL}/recommendations/tasks/${taskId}?strategy=${encodeURIComponent(strategy)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
+  const response = await fetch(buildRecommendationUrl(taskId, strategy, mode), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);
@@ -85,19 +115,15 @@ export async function getTaskRecommendations(
 export async function getTaskSimulation(
   taskId: string,
   token: string,
-  strategy = "balance"
+  strategy = "balance",
+  mode: RecommendationMode = "heuristic"
 ): Promise<TaskSimulationResponse> {
-  const response = await fetch(
-    `${API_BASE_URL}/recommendations/tasks/${taskId}/simulation?strategy=${encodeURIComponent(
-      strategy
-    )}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
-  );
+  const response = await fetch(buildRecommendationUrl(taskId, strategy, mode, true), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => null);

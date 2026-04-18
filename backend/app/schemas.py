@@ -305,12 +305,17 @@ class TaskRecommendationItem(BaseModel):
     skill_match_score: Optional[float] = None
     availability_score: Optional[float] = None
     performance_score: Optional[float] = None
+    heuristic_score: Optional[float] = None
+    ml_success_probability: Optional[float] = None
+    hybrid_score: Optional[float] = None
+    model_used: bool = False
 
 
 class TaskRecommendationResponse(BaseModel):
     task_id: int
     task_title: str
     strategy: str
+    mode: str
     recommendations: list[TaskRecommendationItem]
 
 
@@ -328,12 +333,17 @@ class TaskSimulationItem(BaseModel):
     projected_active_tasks: int
     estimated_hours_impact: float
     matching_skills: list[str] = Field(default_factory=list)
+    heuristic_score: Optional[float] = None
+    ml_success_probability: Optional[float] = None
+    hybrid_score: Optional[float] = None
+    model_used: bool = False
 
 
 class TaskSimulationResponse(BaseModel):
     task_id: int
     task_title: str
     strategy: str
+    mode: str
     simulations: list[TaskSimulationItem]
 
 

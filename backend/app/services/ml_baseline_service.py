@@ -231,6 +231,66 @@ def _extract_feature_importance(model: Pipeline) -> list[dict[str, float]]:
     return rows[:15]
 
 
+
+
+
+def build_feature_payload(
+    *,
+    source: str,
+    strategy: str,
+    priority_snapshot: str,
+    recommendation_score: float,
+    workload_score: float,
+    skill_match_score: float,
+    availability_score: float,
+    performance_score: float,
+    current_load_snapshot: float,
+    availability_snapshot: float,
+    active_tasks_snapshot: int,
+    required_skills_count: int,
+    matching_skills_count: int,
+    matching_ratio: float,
+    estimated_hours_snapshot: float | None,
+    complexity_snapshot: int,
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "strategy": strategy,
+        "priority_snapshot": priority_snapshot,
+        "recommendation_score": recommendation_score,
+        "workload_score": workload_score,
+        "skill_match_score": skill_match_score,
+        "availability_score": availability_score,
+        "performance_score": performance_score,
+        "current_load_snapshot": current_load_snapshot,
+        "availability_snapshot": availability_snapshot,
+        "active_tasks_snapshot": active_tasks_snapshot,
+        "required_skills_count": required_skills_count,
+        "matching_skills_count": matching_skills_count,
+        "matching_ratio": matching_ratio,
+        "estimated_hours_snapshot": estimated_hours_snapshot,
+        "complexity_snapshot": complexity_snapshot,
+    }
+
+
+def predict_success_probability_from_features(
+    features: dict[str, Any],
+    *,
+    model: Pipeline | None = None,
+) -> float | None:
+    model_to_use = model or load_baseline_model()
+    if model_to_use is None:
+        return None
+
+    feature_row = {}
+    for feature in NUMERIC_FEATURES + CATEGORICAL_FEATURES:
+        feature_row[feature] = features.get(feature)
+
+    df = pd.DataFrame([feature_row])
+    probability = model_to_use.predict_proba(df)[0][1]
+    return round(float(probability), 4)
+
+
 def train_baseline_model(
     db: Session,
     *,

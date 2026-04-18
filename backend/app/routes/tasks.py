@@ -4,7 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.models import ProjectMember, Task, TaskAssignmentHistory, TaskOutcome, TaskRequiredSkill, User
+from app.models import (
+    ProjectMember,
+    Task,
+    TaskAssignmentHistory,
+    TaskOutcome,
+    TaskRequiredSkill,
+    User,
+)
 from app.schemas import (
     AssignmentHistoryDetailedItem,
     AssignmentHistoryItem,
@@ -14,7 +21,10 @@ from app.schemas import (
     TaskOutcomeCreate,
     TaskOutcomeResponse,
 )
-from app.services.recommendation_engine import build_assignment_snapshot_data, load_task_or_none
+from app.services.recommendation_engine import (
+    build_assignment_snapshot_data,
+    load_task_or_none,
+)
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -26,11 +36,30 @@ def _load_task_with_relations(db: Session, task_id: int):
             joinedload(Task.assignee).joinedload(User.global_role),
             joinedload(Task.creator).joinedload(User.global_role),
             joinedload(Task.required_skills).joinedload(TaskRequiredSkill.skill),
-            joinedload(Task.project).joinedload(ProjectMember.user),
         )
         .filter(Task.id == task_id)
         .first()
     )
+
+
+def _compute_success_score(
+    *,
+    finished_on_time: Optional[bool],
+    delay_hours: float,
+    quality_score: Optional[int],
+    had_rework: bool,
+) -> float:
+    score = 0.0
+
+    if finished_on_time:
+        score += 35
+    else:
+        score += max(0.0, 15 - float(delay_hours or 0) * 1.8)
+
+    score += int(quality_score or 0) * 12
+    score += -8 if had_rework else 10
+
+    return round(max(0.0, min(100.0, score)), 2)
 
 
 @router.get("/project/{project_id}", response_model=List[TaskBase])
@@ -186,6 +215,7 @@ def assign_task(task_id: int, payload: TaskAssignRequest, db: Session = Depends(
         active_tasks_snapshot=snapshot["active_tasks_snapshot"],
         required_skills_count=snapshot["required_skills_count"],
         matching_skills_count=snapshot["matching_skills_count"],
+        matching_ratio=snapshot["matching_ratio"],
         estimated_hours_snapshot=snapshot["estimated_hours_snapshot"],
         priority_snapshot=snapshot["priority_snapshot"],
         complexity_snapshot=snapshot["complexity_snapshot"],
@@ -233,25 +263,44 @@ def upsert_task_outcome(task_id: int, payload: TaskOutcomeCreate, db: Session = 
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
+    rework_count = (
+        payload.rework_count
+        if payload.rework_count is not None
+        else (1 if payload.had_rework else 0)
+    )
+
+    success_score = _compute_success_score(
+        finished_on_time=payload.finished_on_time,
+        delay_hours=payload.delay_hours,
+        quality_score=payload.quality_score,
+        had_rework=payload.had_rework,
+    )
+
     existing = db.query(TaskOutcome).filter(TaskOutcome.task_id == task_id).first()
 
     if existing:
+        existing.completed_at = payload.completed_at
         existing.finished_on_time = payload.finished_on_time
         existing.delay_hours = payload.delay_hours
         existing.quality_score = payload.quality_score
         existing.had_rework = payload.had_rework
-        existing.outcome_notes = payload.outcome_notes
+        existing.rework_count = rework_count
+        existing.success_score = success_score
+        existing.notes = payload.notes
         db.commit()
         db.refresh(existing)
         return existing
 
     outcome = TaskOutcome(
         task_id=task_id,
+        completed_at=payload.completed_at,
         finished_on_time=payload.finished_on_time,
         delay_hours=payload.delay_hours,
         quality_score=payload.quality_score,
         had_rework=payload.had_rework,
-        outcome_notes=payload.outcome_notes,
+        rework_count=rework_count,
+        success_score=success_score,
+        notes=payload.notes,
     )
 
     db.add(outcome)

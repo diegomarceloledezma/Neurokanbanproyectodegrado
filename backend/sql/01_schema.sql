@@ -169,6 +169,7 @@ CREATE TABLE assignment_decisions (
     active_tasks_snapshot INT,
     required_skills_count INT,
     matching_skills_count INT,
+    matching_ratio NUMERIC(6,2),
     estimated_hours_snapshot NUMERIC(6,2),
     priority_snapshot VARCHAR(20),
     complexity_snapshot INT,
@@ -180,10 +181,13 @@ CREATE TABLE assignment_decisions (
 CREATE TABLE task_outcomes (
     id BIGSERIAL PRIMARY KEY,
     task_id BIGINT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+    completed_at TIMESTAMPTZ,
     finished_on_time BOOLEAN,
     delay_hours NUMERIC(6,2) DEFAULT 0,
     quality_score INT CHECK (quality_score BETWEEN 1 AND 5),
     had_rework BOOLEAN DEFAULT FALSE,
-    outcome_notes TEXT,
-    recorded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    rework_count INT DEFAULT 0,
+    success_score NUMERIC(6,2),
+    notes TEXT,
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

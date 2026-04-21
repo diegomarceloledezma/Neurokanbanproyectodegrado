@@ -1,8 +1,9 @@
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
 from app.models import User
@@ -10,6 +11,40 @@ from app.schemas import UserBase, UserCreate
 from app.security import hash_password
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+def _normalize_username(value: str) -> str:
+    return value.strip().lower()
+
+
+def _normalize_email(value: str) -> str:
+    return value.strip().lower()
+
+
+def _validate_password_strength(password: str) -> None:
+    if len(password) < 8:
+        raise HTTPException(
+            status_code=400,
+            detail="La contraseña debe tener al menos 8 caracteres",
+        )
+
+    if not any(char.isupper() for char in password):
+        raise HTTPException(
+            status_code=400,
+            detail="La contraseña debe incluir al menos una letra mayúscula",
+        )
+
+    if not any(char.islower() for char in password):
+        raise HTTPException(
+            status_code=400,
+            detail="La contraseña debe incluir al menos una letra minúscula",
+        )
+
+    if not any(char.isdigit() for char in password):
+        raise HTTPException(
+            status_code=400,
+            detail="La contraseña debe incluir al menos un número",
+        )
 
 
 @router.get("/", response_model=List[UserBase])
@@ -40,9 +75,17 @@ def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
 
 @router.post("/register", response_model=UserBase)
 def register_user(payload: UserCreate, db: Session = Depends(get_db)):
+    normalized_username = _normalize_username(payload.username)
+    normalized_email = _normalize_email(payload.email)
+
+    _validate_password_strength(payload.password)
+
     existing_user = (
         db.query(User)
-        .filter((User.email == payload.email) | (User.username == payload.username))
+        .filter(
+            (func.lower(User.email) == normalized_email)
+            | (func.lower(User.username) == normalized_username)
+        )
         .first()
     )
 
@@ -53,9 +96,9 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
         hashed_password = hash_password(payload.password)
 
         new_user = User(
-            full_name=payload.full_name,
-            username=payload.username,
-            email=payload.email,
+            full_name=payload.full_name.strip(),
+            username=normalized_username,
+            email=normalized_email,
             password_hash=hashed_password,
             avatar_url=payload.avatar_url,
             global_role_id=payload.global_role_id,
@@ -78,6 +121,9 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="Error de integridad en base de datos")
-    except Exception as e:
+    except HTTPException:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
+        raise
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error interno al registrar el usuario")

@@ -1,30 +1,9 @@
 import { API_BASE_URL } from "../config";
+import { clearSession, saveSession, type StoredUser } from "./sessionService";
 
 export type LoginPayload = {
   username_or_email: string;
   password: string;
-};
-
-export type UserResponse = {
-  id: number;
-  full_name: string;
-  username: string;
-  email: string;
-  avatar_url?: string | null;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-  global_role?: {
-    id: number;
-    name: string;
-    description?: string | null;
-  } | null;
-};
-
-export type LoginResponse = {
-  access_token: string;
-  token_type: string;
-  user: UserResponse;
 };
 
 export type RegisterPayload = {
@@ -33,10 +12,41 @@ export type RegisterPayload = {
   email: string;
   password: string;
   avatar_url?: string | null;
-  global_role_id: number;
+  global_role_id?: number | null;
 };
 
-export async function loginUser(payload: LoginPayload): Promise<LoginResponse> {
+export type LoginResponse = {
+  access_token: string;
+  token_type: string;
+  user: StoredUser;
+};
+
+function normalizeApiErrorMessage(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0];
+    if (typeof first === "string") return first;
+    if (
+      typeof first === "object" &&
+      first !== null &&
+      "msg" in first &&
+      typeof (first as { msg?: unknown }).msg === "string"
+    ) {
+      return (first as { msg: string }).msg;
+    }
+  }
+
+  return fallback;
+}
+
+async function parseApiError(response: Response, fallback: string): Promise<never> {
+  const data = await response.json().catch(() => null);
+  const message = normalizeApiErrorMessage((data as { detail?: unknown } | null)?.detail, fallback);
+  throw new Error(message);
+}
+
+export async function login(payload: LoginPayload): Promise<LoginResponse> {
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: "POST",
     headers: {
@@ -46,14 +56,15 @@ export async function loginUser(payload: LoginPayload): Promise<LoginResponse> {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.detail || "Error al iniciar sesión");
+    await parseApiError(response, "No se pudo iniciar sesión");
   }
 
-  return response.json();
+  const data = (await response.json()) as LoginResponse;
+  saveSession(data.access_token, data.user);
+  return data;
 }
 
-export async function registerUser(payload: RegisterPayload) {
+export async function register(payload: RegisterPayload): Promise<StoredUser> {
   const response = await fetch(`${API_BASE_URL}/users/register`, {
     method: "POST",
     headers: {
@@ -63,14 +74,13 @@ export async function registerUser(payload: RegisterPayload) {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.detail || "Error al registrarse");
+    await parseApiError(response, "No se pudo registrar el usuario");
   }
 
   return response.json();
 }
 
-export async function getCurrentUser(token: string): Promise<UserResponse> {
+export async function fetchCurrentUser(token: string): Promise<StoredUser> {
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     method: "GET",
     headers: {
@@ -79,9 +89,13 @@ export async function getCurrentUser(token: string): Promise<UserResponse> {
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.detail || "No se pudo obtener el usuario autenticado");
+    clearSession();
+    await parseApiError(response, "Tu sesión expiró o ya no es válida");
   }
 
   return response.json();
+}
+
+export function logout() {
+  clearSession();
 }

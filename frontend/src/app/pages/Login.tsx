@@ -1,128 +1,120 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
-import { Mail, Lock, Eye, EyeOff } from "lucide-react";
-import { loginUser } from "../services/authService";
-import { saveSession } from "../services/sessionService";
+import { useEffect, useState } from "react";
+import { Eye, EyeOff, Lock, Mail } from "lucide-react";
+import { Link, useLocation, useNavigate } from "react-router";
+import { login } from "../services/authService";
+import { isAuthenticated } from "../services/sessionService";
 
-const logo = new URL("../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png", import.meta.url).href;
+type LocationState = {
+  from?: string;
+};
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const redirectTarget = (location.state as LocationState | null)?.from ?? "/";
 
   const [usernameOrEmail, setUsernameOrEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  useEffect(() => {
+    if (isAuthenticated()) {
+      navigate("/", { replace: true });
+    }
+  }, [navigate]);
 
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
     setError("");
-    setLoading(true);
 
     try {
-      const data = await loginUser({
-        username_or_email: usernameOrEmail,
+      await login({
+        username_or_email: usernameOrEmail.trim(),
         password,
       });
 
-      saveSession(data.access_token, data.user);
-
-      navigate("/");
+      navigate(redirectTarget, { replace: true });
     } catch (err) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("Ocurrió un error al iniciar sesión");
-      }
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo iniciar sesión");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   return (
-    <div className="nk-login-page min-h-screen bg-slate-950 flex items-center justify-center p-4">
-      <div className="nk-login-container w-full max-w-md">
-        <div className="nk-login-header text-center mb-8">
-          <img src={logo} alt="NeuroKanban" className="nk-logo h-16 mx-auto mb-6" />
-          <h1 className="nk-login-title text-3xl text-white mb-2">Bienvenido nuevamente</h1>
-          <p className="nk-login-subtitle text-slate-400">
-            Ingresa tus credenciales para continuar
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
+        <div className="mb-8 text-center">
+          <h1 className="text-3xl text-white mb-2">Iniciar sesión</h1>
+          <p className="text-slate-400">
+            Accede a NeuroKanban con tu usuario o correo institucional.
           </p>
         </div>
 
-        <div className="nk-login-card bg-slate-900 rounded-2xl border border-slate-800 p-8 shadow-2xl">
-          <form onSubmit={handleSubmit} className="nk-login-form space-y-6">
-            <div className="nk-form-group">
-              <label className="nk-form-label block text-sm text-slate-300 mb-2">
-                Correo o usuario
-              </label>
-              <div className="nk-input-wrapper relative">
-                <Mail className="nk-input-icon absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-                <input
-                  type="text"
-                  value={usernameOrEmail}
-                  onChange={(e) => setUsernameOrEmail(e.target.value)}
-                  className="nk-input w-full pl-11 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-                  placeholder="tu_correo@empresa.com o tu usuario"
-                  required
-                />
-              </div>
-            </div>
-
-            <div className="nk-form-group">
-              <label className="nk-form-label block text-sm text-slate-300 mb-2">
-                Contraseña
-              </label>
-              <div className="nk-input-wrapper relative">
-                <Lock className="nk-input-icon absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-                <input
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="nk-input w-full pl-11 pr-12 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
-                  placeholder="••••••••"
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-cyan-400 transition-colors"
-                  aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
-                >
-                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-
-            {error && (
-              <div className="nk-error-message rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="nk-submit-button w-full py-3 bg-gradient-to-r from-cyan-500 to-purple-600 text-white rounded-lg hover:from-cyan-600 hover:to-purple-700 transition-all shadow-lg shadow-cyan-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              {loading ? "Ingresando..." : "Iniciar sesión"}
-            </button>
-          </form>
-
-          <div className="nk-register-link-wrapper mt-6 text-center">
-            <p className="text-slate-400 text-sm">
-              ¿No tienes cuenta?{" "}
-              <button
-                onClick={() => navigate("/register")}
-                className="text-cyan-400 hover:text-cyan-300 transition-colors"
-              >
-                Crear cuenta
-              </button>
-            </p>
+        {error && (
+          <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300 text-sm">
+            {error}
           </div>
-        </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Usuario o correo</label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={usernameOrEmail}
+                onChange={(e) => setUsernameOrEmail(e.target.value)}
+                placeholder="Ingresa tu usuario o correo"
+                className="w-full pl-10 pr-4 py-3 rounded-lg bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Contraseña</label>
+            <div className="relative">
+              <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Ingresa tu contraseña"
+                className="w-full pl-10 pr-12 py-3 rounded-lg bg-slate-800 border border-slate-700 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+                required
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {submitting ? "Ingresando..." : "Ingresar"}
+          </button>
+        </form>
+
+        <p className="text-sm text-slate-400 mt-6 text-center">
+          ¿No tienes cuenta?{" "}
+          <Link to="/register" className="text-cyan-400 hover:text-cyan-300">
+            Regístrate aquí
+          </Link>
+        </p>
       </div>
     </div>
   );

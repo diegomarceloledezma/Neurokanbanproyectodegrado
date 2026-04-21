@@ -1,15 +1,23 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle, Clock, Users, TrendingUp, Sparkles, FolderKanban } from "lucide-react";
+import {
+  AlertCircle,
+  CheckCircle,
+  Clock,
+  FolderKanban,
+  Sparkles,
+  TrendingUp,
+  Users,
+} from "lucide-react";
 import { useNavigate } from "react-router";
 import { tasks, teamMembers } from "../data/mockData";
-import { getCurrentUser, type UserResponse } from "../services/authService";
-import { clearSession, getAccessToken } from "../services/sessionService";
+import { fetchCurrentUser } from "../services/authService";
+import { clearSession, getAccessToken, type StoredUser } from "../services/sessionService";
 import { getProjects, type ProjectResponse } from "../services/projectService";
 
 export default function Dashboard() {
   const navigate = useNavigate();
 
-  const [currentUser, setCurrentUser] = useState<UserResponse | null>(null);
+  const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [sessionError, setSessionError] = useState("");
@@ -25,7 +33,7 @@ export default function Dashboard() {
 
       try {
         const [user, projectList] = await Promise.all([
-          getCurrentUser(token),
+          fetchCurrentUser(token),
           getProjects(token),
         ]);
 
@@ -45,8 +53,12 @@ export default function Dashboard() {
 
   const pendingTasks = tasks.filter((t) => t.status === "pending").length;
   const inProgressTasks = tasks.filter((t) => t.status === "in-progress").length;
-  const overdueTasks = tasks.filter((t) => new Date(t.deadline) < new Date() && t.status !== "completed").length;
-  const teamLoad = Math.round(teamMembers.reduce((acc, m) => acc + m.currentLoad, 0) / teamMembers.length);
+  const overdueTasks = tasks.filter(
+    (t) => new Date(t.deadline) < new Date() && t.status !== "completed"
+  ).length;
+  const teamLoad = Math.round(
+    teamMembers.reduce((acc, member) => acc + member.currentLoad, 0) / teamMembers.length
+  );
 
   const recentRecommendations = [
     {
@@ -88,12 +100,9 @@ export default function Dashboard() {
 
       {currentUser && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-          <h2 className="text-white text-lg mb-1">
-            Hola, {currentUser.full_name}
-          </h2>
+          <h2 className="text-white text-lg mb-1">Hola, {currentUser.full_name}</h2>
           <p className="text-slate-400 text-sm">
-            Usuario: {currentUser.username} · Rol:{" "}
-            {currentUser.global_role?.name ?? "Sin rol"}
+            Usuario: {currentUser.username} · Rol: {currentUser.role_name ?? "Sin rol"}
           </p>
         </div>
       )}
@@ -112,7 +121,8 @@ export default function Dashboard() {
             </div>
             <span className="text-2xl text-white">{pendingTasks}</span>
           </div>
-          <h3 className="text-slate-400 text-sm">Tareas pendientes</h3>
+          <h3 className="text-slate-300 mb-1">Tareas pendientes</h3>
+          <p className="text-slate-500 text-sm">Actividades aún no iniciadas</p>
         </div>
 
         <div className="nk-stat-card bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all">
@@ -122,7 +132,8 @@ export default function Dashboard() {
             </div>
             <span className="text-2xl text-white">{inProgressTasks}</span>
           </div>
-          <h3 className="text-slate-400 text-sm">En progreso</h3>
+          <h3 className="text-slate-300 mb-1">En progreso</h3>
+          <p className="text-slate-500 text-sm">Tareas actualmente en ejecución</p>
         </div>
 
         <div className="nk-stat-card bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all">
@@ -132,7 +143,8 @@ export default function Dashboard() {
             </div>
             <span className="text-2xl text-white">{overdueTasks}</span>
           </div>
-          <h3 className="text-slate-400 text-sm">Tareas vencidas</h3>
+          <h3 className="text-slate-300 mb-1">Vencidas</h3>
+          <p className="text-slate-500 text-sm">Tareas fuera de plazo</p>
         </div>
 
         <div className="nk-stat-card bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all">
@@ -142,134 +154,69 @@ export default function Dashboard() {
             </div>
             <span className="text-2xl text-white">{teamLoad}%</span>
           </div>
-          <h3 className="text-slate-400 text-sm">Carga del equipo</h3>
+          <h3 className="text-slate-300 mb-1">Carga promedio</h3>
+          <p className="text-slate-500 text-sm">Promedio de ocupación del equipo</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 rounded-lg">
-              <FolderKanban className="w-5 h-5 text-cyan-400" />
-            </div>
-            <h2 className="text-xl text-white">Proyectos</h2>
+          <div className="flex items-center gap-3 mb-5">
+            <FolderKanban className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-xl text-white">Proyectos recientes</h2>
           </div>
 
           {projects.length === 0 ? (
-            <p className="text-slate-400 text-sm">
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-5 text-slate-400">
               No hay proyectos registrados todavía.
-            </p>
+            </div>
           ) : (
             <div className="space-y-4">
-              {projects.map((project) => (
-                <div
+              {projects.slice(0, 5).map((project) => (
+                <button
                   key={project.id}
                   onClick={() => navigate(`/project/${project.id}`)}
-                  className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/30 transition-all cursor-pointer"
+                  className="w-full text-left p-4 rounded-xl border border-slate-800 bg-slate-950/40 hover:border-slate-700 hover:bg-slate-800/50 transition-all"
                 >
-                  <div className="flex items-start justify-between gap-4 mb-2">
+                  <div className="flex items-start justify-between gap-4">
                     <div>
-                      <h3 className="text-white text-base">{project.name}</h3>
-                      <p className="text-slate-400 text-sm">
-                        {project.description || "Sin descripción"}
+                      <h3 className="text-white">{project.name}</h3>
+                      <p className="text-slate-400 text-sm mt-1 line-clamp-2">
+                        {project.description || "Sin descripción registrada"}
                       </p>
                     </div>
-                    <span className="text-xs px-2 py-1 rounded bg-cyan-500/10 text-cyan-400">
+                    <span className="px-3 py-1 rounded-lg bg-cyan-500/10 text-cyan-300 text-xs border border-cyan-500/20">
                       {project.status}
                     </span>
                   </div>
-
-                  <div className="flex flex-wrap gap-4 text-xs text-slate-500 mt-3">
-                    <span>Área: {project.area?.name ?? "No definida"}</span>
-                    <span>Responsable: {project.creator?.full_name ?? "No disponible"}</span>
-                  </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 rounded-lg">
-              <Sparkles className="w-5 h-5 text-cyan-400" />
-            </div>
+          <div className="flex items-center gap-3 mb-5">
+            <Sparkles className="w-5 h-5 text-purple-400" />
             <h2 className="text-xl text-white">Recomendaciones recientes</h2>
           </div>
 
           <div className="space-y-4">
-            {recentRecommendations.map((rec) => (
+            {recentRecommendations.map((item) => (
               <div
-                key={rec.id}
-                className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/30 transition-all cursor-pointer"
-                onClick={() => navigate("/recommendation/task-2")}
+                key={item.id}
+                className="p-4 rounded-xl border border-slate-800 bg-slate-950/40"
               >
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-white text-sm">{rec.task}</h3>
-                  <span
-                    className={`text-xs px-2 py-1 rounded ${
-                      rec.status === "Asignado"
-                        ? "bg-green-500/10 text-green-400"
-                        : "bg-yellow-500/10 text-yellow-400"
-                    }`}
-                  >
-                    {rec.status}
-                  </span>
+                <p className="text-white text-sm mb-1">{item.task}</p>
+                <p className="text-slate-400 text-sm mb-3">{item.recommendation}</p>
+                <div className="flex items-center gap-2 text-xs">
+                  <CheckCircle className="w-4 h-4 text-green-400" />
+                  <span className="text-green-300">{item.status}</span>
                 </div>
-                <p className="text-cyan-400 text-sm">{rec.recommendation}</p>
               </div>
             ))}
           </div>
         </div>
-      </div>
-
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 bg-gradient-to-br from-cyan-500/10 to-purple-500/10 rounded-lg">
-            <CheckCircle className="w-5 h-5 text-cyan-400" />
-          </div>
-          <h2 className="text-xl text-white">Métricas del equipo</h2>
-        </div>
-
-        <div className="space-y-5">
-          {teamMembers.slice(0, 4).map((member) => (
-            <div key={member.id}>
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-xs">
-                    {member.name.split(" ").map((n) => n[0]).join("")}
-                  </div>
-                  <div>
-                    <p className="text-white text-sm">{member.name}</p>
-                    <p className="text-slate-500 text-xs">
-                      {member.activeTasks} tareas activas
-                    </p>
-                  </div>
-                </div>
-                <span className="text-slate-300 text-sm">{member.currentLoad}%</span>
-              </div>
-              <div className="w-full bg-slate-800 rounded-full h-2">
-                <div
-                  className={`h-2 rounded-full ${
-                    member.currentLoad > 70
-                      ? "bg-gradient-to-r from-red-500 to-orange-500"
-                      : member.currentLoad > 50
-                      ? "bg-gradient-to-r from-yellow-500 to-orange-500"
-                      : "bg-gradient-to-r from-cyan-500 to-purple-600"
-                  }`}
-                  style={{ width: `${member.currentLoad}%` }}
-                ></div>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <button
-          onClick={() => navigate("/metrics")}
-          className="w-full mt-6 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-all text-sm"
-        >
-          Ver todas las métricas
-        </button>
       </div>
     </div>
   );

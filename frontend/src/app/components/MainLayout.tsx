@@ -43,9 +43,9 @@ export default function MainLayout() {
       { name: "Panel principal", path: "/", icon: LayoutDashboard, disabled: false },
       {
         name: "Proyectos",
-        path: firstProjectId ? `/project/${firstProjectId}` : "#",
+        path: "/projects",
         icon: FolderKanban,
-        disabled: !firstProjectId,
+        disabled: false,
       },
       {
         name: "Tablero Kanban",
@@ -68,8 +68,13 @@ export default function MainLayout() {
     admin: "Administrador",
   };
 
-  const displayRole = currentUser?.global_role?.name
-    ? roleLabels[currentUser.global_role.name] ?? currentUser.global_role.name
+  const rawRole =
+    currentUser?.global_role?.name ??
+    currentUser?.role_name ??
+    null;
+
+  const displayRole = rawRole
+    ? roleLabels[rawRole] ?? rawRole
     : "Sin rol";
 
   const initials = displayName

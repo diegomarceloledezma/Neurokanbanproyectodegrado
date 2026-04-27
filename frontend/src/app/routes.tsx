@@ -33,7 +33,6 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, Component: Dashboard },
-
       { path: "projects", Component: Projects },
       { path: "projects/:projectId", Component: Project },
       { path: "kanban/:projectId", Component: KanbanBoard },

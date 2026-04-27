@@ -1,3 +1,9 @@
+export type StoredRole = {
+  id: number;
+  name: string;
+  description?: string | null;
+};
+
 export type StoredUser = {
   id: number;
   full_name: string;
@@ -5,6 +11,7 @@ export type StoredUser = {
   email: string;
   avatar_url?: string | null;
   role_name?: string | null;
+  global_role?: StoredRole | null;
 };
 
 const ACCESS_TOKEN_KEY = "nk_access_token";

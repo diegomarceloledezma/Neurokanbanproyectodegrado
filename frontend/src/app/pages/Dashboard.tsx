@@ -81,6 +81,21 @@ export default function Dashboard() {
     },
   ];
 
+  const roleLabels: Record<string, string> = {
+    leader: "Líder de equipo",
+    member: "Integrante del equipo",
+    admin: "Administrador",
+  };
+
+  const rawRole =
+    currentUser?.global_role?.name ??
+    currentUser?.role_name ??
+    null;
+
+  const displayRole = rawRole
+    ? roleLabels[rawRole] ?? rawRole
+    : "Sin rol";
+
   if (sessionLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-300">
@@ -102,7 +117,7 @@ export default function Dashboard() {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
           <h2 className="text-white text-lg mb-1">Hola, {currentUser.full_name}</h2>
           <p className="text-slate-400 text-sm">
-            Usuario: {currentUser.username} · Rol: {currentUser.role_name ?? "Sin rol"}
+            Usuario: {currentUser.username} · Rol: {displayRole}
           </p>
         </div>
       )}
@@ -175,7 +190,7 @@ export default function Dashboard() {
               {projects.slice(0, 5).map((project) => (
                 <button
                   key={project.id}
-                  onClick={() => navigate(`/project/${project.id}`)}
+                  onClick={() => navigate(`/projects/${project.id}`)}
                   className="w-full text-left p-4 rounded-xl border border-slate-800 bg-slate-950/40 hover:border-slate-700 hover:bg-slate-800/50 transition-all"
                 >
                   <div className="flex items-start justify-between gap-4">

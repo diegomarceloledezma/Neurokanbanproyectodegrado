@@ -408,3 +408,44 @@ class TrainingDatasetRow(BaseModel):
     had_rework: Optional[bool] = None
     success_score: float
     success_label: int
+
+
+class AvailableUserItem(BaseModel):
+    id: int
+    full_name: str
+    username: str
+    email: str
+    role_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectMemberCreateRequest(BaseModel):
+    user_id: int
+    project_role: str
+    weekly_capacity_hours: Optional[float] = None
+    availability_percentage: Optional[float] = None
+
+
+class ProjectMemberResponse(BaseModel):
+    id: int
+    project_id: int
+    user_id: int
+    project_role: str
+    weekly_capacity_hours: Optional[float] = None
+    availability_percentage: Optional[float] = None
+    joined_at: datetime
+    user: UserBase
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectCreate(BaseModel):
+    team_id: int
+    area_id: Optional[int] = None
+    name: str
+    description: Optional[str] = None
+    status: str = "active"
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    created_by: Optional[int] = None

@@ -53,7 +53,7 @@ export default function MainLayout() {
         icon: CheckSquare,
         disabled: !firstProjectId,
       },
-      { name: "Equipo", path: "/member/1", icon: Users, disabled: false },
+      { name: "Equipo", path: "/team", icon: Users, disabled: false },
       { name: "Métricas", path: "/metrics", icon: BarChart3, disabled: false },
       { name: "Historial de decisiones", path: "/history", icon: History, disabled: false },
     ],

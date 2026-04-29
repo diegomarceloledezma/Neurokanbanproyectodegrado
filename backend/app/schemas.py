@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, List
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -263,6 +263,25 @@ class MemberSkillItem(BaseModel):
     verified_by_leader: bool = False
 
 
+class MemberSkillManageItem(BaseModel):
+    id: int
+    skill_id: int
+    skill_name: str
+    category: Optional[str] = None
+    level: int
+    years_experience: float = 0
+    verified_by_leader: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MemberSkillCreateRequest(BaseModel):
+    skill_id: int
+    level: int = Field(ge=1, le=5)
+    years_experience: float = Field(default=0, ge=0)
+    verified_by_leader: bool = False
+
+
 class MemberProfileResponse(BaseModel):
     id: int
     full_name: str
@@ -449,3 +468,69 @@ class ProjectCreate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     created_by: Optional[int] = None
+
+
+class DashboardProjectItem(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    status: str
+    members_count: int
+
+
+class DashboardRecommendationItem(BaseModel):
+    id: int
+    task_id: int
+    task_title: str
+    assigned_user_name: str
+    recommendation_score: float = 0
+    strategy: Optional[str] = None
+    source: str
+    created_at: datetime
+
+
+class DashboardOverviewResponse(BaseModel):
+    total_projects: int
+    total_tasks: int
+    pending_tasks: int
+    in_progress_tasks: int
+    completed_tasks: int
+    overdue_tasks: int
+    team_load_average: float
+    average_completion_rate: float
+    recent_projects: List[DashboardProjectItem]
+    recent_recommendations: List[DashboardRecommendationItem]
+
+
+class DashboardValuePoint(BaseModel):
+    id: int
+    name: str
+    primary_value: float
+    secondary_value: Optional[float] = None
+
+
+class DashboardStatusDistributionItem(BaseModel):
+    id: str
+    name: str
+    value: int
+
+
+class DashboardTeamMemberMetricItem(BaseModel):
+    id: int
+    name: str
+    role_name: str
+    active_tasks: int
+    current_load: float
+    completion_rate: float
+
+
+class DashboardTeamMetricsResponse(BaseModel):
+    completed_tasks: int
+    delayed_tasks: int
+    average_completion_rate: float
+    total_tasks: int
+    tasks_by_status: List[DashboardStatusDistributionItem]
+    workload_data: List[DashboardValuePoint]
+    performance_data: List[DashboardValuePoint]
+    time_comparison_data: List[DashboardValuePoint]
+    team_members: List[DashboardTeamMemberMetricItem]

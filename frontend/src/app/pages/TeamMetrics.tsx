@@ -1,5 +1,5 @@
+import { useEffect, useState } from "react";
 import { BarChart3, TrendingUp, Clock, CheckCircle } from "lucide-react";
-import { teamMembers, tasks } from "../data/mockData";
 import {
   BarChart,
   Bar,
@@ -10,58 +10,89 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
+import { getAccessToken } from "../services/sessionService";
+import {
+  getDashboardTeamMetrics,
+  type DashboardTeamMetricsResponse,
+} from "../services/dashboardService";
+
+const roleLabels: Record<string, string> = {
+  leader: "Líder de equipo",
+  member: "Integrante del equipo",
+  admin: "Administrador",
+};
 
 export default function TeamMetrics() {
-  const completedTasks = tasks.filter((task) => task.status === "completed").length;
-  const delayedTasks = tasks.filter(
-    (task) => new Date(task.deadline) < new Date() && task.status !== "completed"
-  ).length;
+  const [metrics, setMetrics] = useState<DashboardTeamMetricsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const workloadData = teamMembers.map((member) => ({
-    id: member.id,
-    name: member.name.split(" ")[0],
-    carga: member.currentLoad,
-    tareas: member.activeTasks,
-  }));
+  useEffect(() => {
+    const loadMetrics = async () => {
+      const token = getAccessToken();
+      if (!token) {
+        setError("No hay sesión activa.");
+        setLoading(false);
+        return;
+      }
 
-  const performanceData = teamMembers.map((member) => ({
-    id: member.id,
-    name: member.name.split(" ")[0],
-    cumplimiento: member.completionRate,
-  }));
+      try {
+        const data = await getDashboardTeamMetrics(token);
+        setMetrics(data);
+      } catch (err) {
+        if (err instanceof Error) setError(err.message);
+        else setError("No se pudieron cargar las métricas.");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-  const tasksByStatus = [
-    { id: "pending", name: "Pendientes", value: tasks.filter((task) => task.status === "pending").length },
-    { id: "in-progress", name: "En progreso", value: tasks.filter((task) => task.status === "in-progress").length },
-    { id: "in-review", name: "En revisión", value: tasks.filter((task) => task.status === "in-review").length },
-    { id: "completed", name: "Completadas", value: tasks.filter((task) => task.status === "completed").length },
-  ];
-
-  const timeComparisonData = tasks
-    .filter((task) => task.actualHours && task.estimatedHours)
-    .map((task) => ({
-      id: task.id,
-      name: `${task.title.slice(0, 20)}...`,
-      estimado: task.estimatedHours,
-      real: task.actualHours,
-    }));
-
-  const averageCompletionRate = teamMembers.length
-    ? Math.round(teamMembers.reduce((acc, member) => acc + member.completionRate, 0) / teamMembers.length)
-    : 0;
+    loadMetrics();
+  }, []);
 
   const safePercentage = (value: number) => {
-    if (!tasks.length) return 0;
-    return (value / tasks.length) * 100;
+    if (!metrics || !metrics.total_tasks) return 0;
+    return (value / metrics.total_tasks) * 100;
   };
+
+  if (loading) {
+    return <div className="text-slate-300">Cargando métricas del equipo...</div>;
+  }
+
+  if (error || !metrics) {
+    return (
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
+        {error || "No se pudieron cargar las métricas del equipo."}
+      </div>
+    );
+  }
+
+  const workloadData = metrics.workload_data.map((item) => ({
+    id: item.id,
+    name: item.name,
+    carga: item.primary_value,
+    tareas: item.secondary_value ?? 0,
+  }));
+
+  const performanceData = metrics.performance_data.map((item) => ({
+    id: item.id,
+    name: item.name,
+    cumplimiento: item.primary_value,
+  }));
+
+  const timeComparisonData = metrics.time_comparison_data.map((item) => ({
+    id: item.id,
+    name: item.name,
+    estimado: item.primary_value,
+    real: item.secondary_value ?? 0,
+  }));
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl text-white mb-2">Métricas del equipo</h1>
-        <p className="text-slate-400">Vista analítica del rendimiento y la distribución de trabajo</p>
-        <p className="text-slate-500 text-sm mt-2">
-          Esta vista todavía utiliza datos de demostración mientras completamos la integración total con el backend.
+        <p className="text-slate-400">
+          Vista analítica del rendimiento y la distribución real del trabajo
         </p>
       </div>
 
@@ -71,7 +102,7 @@ export default function TeamMetrics() {
             <div className="p-3 bg-green-500/10 rounded-lg">
               <CheckCircle className="w-6 h-6 text-green-500" />
             </div>
-            <span className="text-3xl text-white">{completedTasks}</span>
+            <span className="text-3xl text-white">{metrics.completed_tasks}</span>
           </div>
           <h3 className="text-slate-400 text-sm">Tareas completadas</h3>
         </div>
@@ -81,7 +112,7 @@ export default function TeamMetrics() {
             <div className="p-3 bg-red-500/10 rounded-lg">
               <Clock className="w-6 h-6 text-red-500" />
             </div>
-            <span className="text-3xl text-white">{delayedTasks}</span>
+            <span className="text-3xl text-white">{metrics.delayed_tasks}</span>
           </div>
           <h3 className="text-slate-400 text-sm">Tareas retrasadas</h3>
         </div>
@@ -91,7 +122,7 @@ export default function TeamMetrics() {
             <div className="p-3 bg-cyan-500/10 rounded-lg">
               <TrendingUp className="w-6 h-6 text-cyan-500" />
             </div>
-            <span className="text-3xl text-white">{averageCompletionRate}%</span>
+            <span className="text-3xl text-white">{Math.round(metrics.average_completion_rate)}%</span>
           </div>
           <h3 className="text-slate-400 text-sm">Tasa de cumplimiento</h3>
         </div>
@@ -101,7 +132,7 @@ export default function TeamMetrics() {
             <div className="p-3 bg-purple-500/10 rounded-lg">
               <BarChart3 className="w-6 h-6 text-purple-500" />
             </div>
-            <span className="text-3xl text-white">{tasks.length}</span>
+            <span className="text-3xl text-white">{metrics.total_tasks}</span>
           </div>
           <h3 className="text-slate-400 text-sm">Total de tareas</h3>
         </div>
@@ -159,7 +190,7 @@ export default function TeamMetrics() {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <h2 className="text-xl text-white mb-4">Distribución de tareas</h2>
           <div className="space-y-4">
-            {tasksByStatus.map((item) => (
+            {metrics.tasks_by_status.map((item) => (
               <div key={item.id}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-slate-300">{item.name}</span>
@@ -168,12 +199,14 @@ export default function TeamMetrics() {
                 <div className="w-full bg-slate-800 rounded-full h-2">
                   <div
                     className={`h-2 rounded-full ${
-                      item.name === "Completadas"
+                      item.id === "done"
                         ? "bg-green-500"
-                        : item.name === "En progreso"
+                        : item.id === "in_progress"
                         ? "bg-cyan-500"
-                        : item.name === "En revisión"
+                        : item.id === "review"
                         ? "bg-purple-500"
+                        : item.id === "blocked"
+                        ? "bg-red-500"
                         : "bg-slate-600"
                     }`}
                     style={{ width: `${safePercentage(item.value)}%` }}
@@ -187,7 +220,7 @@ export default function TeamMetrics() {
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <h2 className="text-xl text-white mb-4">Resumen del equipo</h2>
           <div className="space-y-3 max-h-[300px] overflow-y-auto">
-            {teamMembers.map((member) => (
+            {metrics.team_members.map((member) => (
               <div
                 key={member.id}
                 className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg hover:border-cyan-500/30 transition-all"
@@ -198,24 +231,27 @@ export default function TeamMetrics() {
                       {member.name
                         .split(" ")
                         .map((n) => n[0])
-                        .join("")}
+                        .join("")
+                        .slice(0, 2)}
                     </div>
                     <div>
                       <p className="text-white">{member.name}</p>
-                      <p className="text-slate-400 text-xs">{member.activeTasks} tareas activas</p>
+                      <p className="text-slate-400 text-xs">
+                        {roleLabels[member.role_name] ?? member.role_name} · {member.active_tasks} tareas activas
+                      </p>
                     </div>
                   </div>
                   <div className="text-right">
                     <p
                       className={`${
-                        member.currentLoad > 70
+                        member.current_load > 70
                           ? "text-red-400"
-                          : member.currentLoad > 50
+                          : member.current_load > 50
                           ? "text-yellow-400"
                           : "text-green-400"
                       }`}
                     >
-                      {member.currentLoad}%
+                      {member.current_load}%
                     </p>
                     <p className="text-slate-500 text-xs">carga</p>
                   </div>
@@ -223,13 +259,13 @@ export default function TeamMetrics() {
                 <div className="w-full bg-slate-700 rounded-full h-1.5">
                   <div
                     className={`h-1.5 rounded-full ${
-                      member.currentLoad > 70
+                      member.current_load > 70
                         ? "bg-gradient-to-r from-red-500 to-orange-500"
-                        : member.currentLoad > 50
+                        : member.current_load > 50
                         ? "bg-gradient-to-r from-yellow-500 to-orange-500"
                         : "bg-gradient-to-r from-cyan-500 to-purple-600"
                     }`}
-                    style={{ width: `${member.currentLoad}%` }}
+                    style={{ width: `${member.current_load}%` }}
                   ></div>
                 </div>
               </div>

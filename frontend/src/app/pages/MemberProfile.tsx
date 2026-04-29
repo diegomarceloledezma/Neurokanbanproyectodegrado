@@ -1,8 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router";
-import { Mail, Briefcase, TrendingUp, CheckCircle, Clock, Award, BrainCircuit } from "lucide-react";
-import { getMemberProfile, type MemberProfileResponse } from "../services/memberService";
+import {
+  Mail,
+  Briefcase,
+  TrendingUp,
+  Clock,
+  Award,
+  BrainCircuit,
+  Plus,
+  Pencil,
+  Trash2,
+} from "lucide-react";
+import {
+  addMemberSkill,
+  deleteMemberSkill,
+  getMemberProfile,
+  getMemberSkills,
+  updateMemberSkill,
+  type MemberProfileResponse,
+  type MemberSkillManageItem,
+} from "../services/memberService";
 import { getAccessToken } from "../services/sessionService";
+import { getSkills, type SkillResponse } from "../services/skillService";
 
 const roleLabels: Record<string, string> = {
   leader: "Líder de equipo",
@@ -38,8 +57,21 @@ export default function MemberProfile() {
   const navigate = useNavigate();
 
   const [member, setMember] = useState<MemberProfileResponse | null>(null);
+  const [memberSkills, setMemberSkills] = useState<MemberSkillManageItem[]>([]);
+  const [allSkills, setAllSkills] = useState<SkillResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  const [selectedSkillId, setSelectedSkillId] = useState("");
+  const [level, setLevel] = useState("3");
+  const [yearsExperience, setYearsExperience] = useState("1");
+  const [verifiedByLeader, setVerifiedByLeader] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [editingSkillId, setEditingSkillId] = useState<number | null>(null);
+  const [deletingSkillId, setDeletingSkillId] = useState<number | null>(null);
+
+  const token = getAccessToken();
 
   useEffect(() => {
     const loadMember = async () => {
@@ -49,16 +81,21 @@ export default function MemberProfile() {
         return;
       }
 
-      const token = getAccessToken();
-
       if (!token) {
         navigate("/login");
         return;
       }
 
       try {
-        const data = await getMemberProfile(memberId, token);
-        setMember(data);
+        const [profileData, skillsData, catalogData] = await Promise.all([
+          getMemberProfile(memberId, token),
+          getMemberSkills(memberId, token),
+          getSkills(token),
+        ]);
+
+        setMember(profileData);
+        setMemberSkills(skillsData);
+        setAllSkills(catalogData);
       } catch (err) {
         if (err instanceof Error) {
           setError(err.message);
@@ -71,16 +108,128 @@ export default function MemberProfile() {
     };
 
     loadMember();
-  }, [memberId, navigate]);
+  }, [memberId, navigate, token]);
+
+  const refreshData = async () => {
+    if (!memberId || !token) return;
+
+    const [profileData, skillsData] = await Promise.all([
+      getMemberProfile(memberId, token),
+      getMemberSkills(memberId, token),
+    ]);
+
+    setMember(profileData);
+    setMemberSkills(skillsData);
+  };
+
+  const resetSkillForm = () => {
+    setSelectedSkillId("");
+    setLevel("3");
+    setYearsExperience("1");
+    setVerifiedByLeader(false);
+    setEditingSkillId(null);
+  };
+
+  const handleSubmitSkill = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!memberId || !token) return;
+
+    if (!selectedSkillId) {
+      setError("Selecciona una habilidad.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setError("");
+      setSuccess("");
+
+      const payload = {
+        skill_id: Number(selectedSkillId),
+        level: Number(level),
+        years_experience: Number(yearsExperience),
+        verified_by_leader: verifiedByLeader,
+      };
+
+      if (editingSkillId) {
+        await updateMemberSkill(memberId, editingSkillId, payload, token);
+        setSuccess("Habilidad actualizada correctamente.");
+      } else {
+        await addMemberSkill(memberId, payload, token);
+        setSuccess("Habilidad registrada correctamente.");
+      }
+
+      await refreshData();
+      resetSkillForm();
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo guardar la habilidad.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleEditSkill = (skill: MemberSkillManageItem) => {
+    setSelectedSkillId(String(skill.skill_id));
+    setLevel(String(skill.level));
+    setYearsExperience(String(skill.years_experience));
+    setVerifiedByLeader(skill.verified_by_leader);
+    setEditingSkillId(skill.id);
+    setSuccess("");
+    setError("");
+  };
+
+  const handleDeleteSkill = async (skill: MemberSkillManageItem) => {
+    if (!memberId || !token) return;
+
+    const confirmed = window.confirm(
+      `¿Seguro que deseas eliminar la habilidad ${skill.skill_name}?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      setDeletingSkillId(skill.id);
+      setError("");
+      setSuccess("");
+
+      await deleteMemberSkill(memberId, skill.id, token);
+      await refreshData();
+
+      if (editingSkillId === skill.id) {
+        resetSkillForm();
+      }
+
+      setSuccess("Habilidad eliminada correctamente.");
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo eliminar la habilidad.");
+    } finally {
+      setDeletingSkillId(null);
+    }
+  };
+
+  const sortedMemberSkills = useMemo(() => {
+    return [...memberSkills].sort((a, b) => a.skill_name.localeCompare(b.skill_name));
+  }, [memberSkills]);
 
   if (loading) {
     return <div className="text-slate-300">Cargando perfil del integrante...</div>;
   }
 
-  if (error || !member) {
+  if (error && !member) {
     return (
       <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        {error || "Integrante no encontrado"}
+        {error}
+      </div>
+    );
+  }
+
+  if (!member) {
+    return (
+      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
+        Integrante no encontrado
       </div>
     );
   }
@@ -147,6 +296,18 @@ export default function MemberProfile() {
         </div>
       </div>
 
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300 text-sm">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-green-300 text-sm">
+          {success}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="space-y-6">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -161,8 +322,8 @@ export default function MemberProfile() {
                 <p className="text-white">{member.username}</p>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-lg">
-                <p className="text-slate-400 text-xs mb-1">Skills registradas</p>
-                <p className="text-white">{member.skills.length}</p>
+                <p className="text-slate-400 text-xs mb-1">Habilidades registradas</p>
+                <p className="text-white">{memberSkills.length}</p>
               </div>
               <div className="p-3 bg-slate-800/50 rounded-lg">
                 <p className="text-slate-400 text-xs mb-1">Total de tareas</p>
@@ -192,7 +353,7 @@ export default function MemberProfile() {
                       : "bg-gradient-to-r from-cyan-500 to-purple-600"
                   }`}
                   style={{ width: `${member.current_load}%` }}
-                ></div>
+                />
               </div>
             </div>
 
@@ -238,7 +399,7 @@ export default function MemberProfile() {
                   <div
                     className="h-2 rounded-full bg-gradient-to-r from-green-500 to-emerald-500"
                     style={{ width: `${member.completion_rate}%` }}
-                  ></div>
+                  />
                 </div>
               </div>
 
@@ -260,13 +421,99 @@ export default function MemberProfile() {
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <div className="flex items-center gap-3 mb-4">
               <BrainCircuit className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-xl text-white">Skills registradas</h2>
+              <h2 className="text-xl text-white">Gestión de habilidades</h2>
             </div>
 
-            {member.skills.length > 0 ? (
+            <form onSubmit={handleSubmitSkill} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="md:col-span-2">
+                <label className="block text-slate-300 text-sm mb-2">Habilidad</label>
+                <select
+                  value={selectedSkillId}
+                  onChange={(e) => setSelectedSkillId(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                  required
+                >
+                  <option value="">Selecciona una habilidad</option>
+                  {allSkills.map((skill) => (
+                    <option key={skill.id} value={skill.id}>
+                      {skill.name} {skill.category ? `— ${skill.category}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Nivel</label>
+                <select
+                  value={level}
+                  onChange={(e) => setLevel(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="1">1 - Básico</option>
+                  <option value="2">2 - Inicial</option>
+                  <option value="3">3 - Intermedio</option>
+                  <option value="4">4 - Avanzado</option>
+                  <option value="5">5 - Experto</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Años de experiencia</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={yearsExperience}
+                  onChange={(e) => setYearsExperience(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="inline-flex items-center gap-3 text-slate-300 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={verifiedByLeader}
+                    onChange={(e) => setVerifiedByLeader(e.target.checked)}
+                    className="rounded"
+                  />
+                  Marcar como verificada por líder
+                </label>
+              </div>
+
+              <div className="md:col-span-2 flex gap-3 flex-wrap">
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all disabled:opacity-60"
+                >
+                  <Plus className="w-4 h-4" />
+                  {submitting
+                    ? "Guardando..."
+                    : editingSkillId
+                    ? "Actualizar habilidad"
+                    : "Agregar habilidad"}
+                </button>
+
+                {editingSkillId && (
+                  <button
+                    type="button"
+                    onClick={resetSkillForm}
+                    className="px-5 py-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 transition-all"
+                  >
+                    Cancelar edición
+                  </button>
+                )}
+              </div>
+            </form>
+
+            {sortedMemberSkills.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {member.skills.map((skill, index) => (
-                  <div key={`${skill.skill_name}-${index}`} className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
+                {sortedMemberSkills.map((skill) => (
+                  <div
+                    key={skill.id}
+                    className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-white">{skill.skill_name}</p>
@@ -276,19 +523,41 @@ export default function MemberProfile() {
                         Nivel {skill.level}
                       </span>
                     </div>
+
                     <div className="mt-3 flex items-center justify-between text-sm text-slate-400 flex-wrap gap-2">
                       <span>{levelLabels[skill.level] ?? "No definido"}</span>
                       <span>{skill.years_experience} años</span>
                       <span className={skill.verified_by_leader ? "text-green-400" : "text-yellow-400"}>
-                        {skill.verified_by_leader ? "Verificada" : "Pendiente de verificación"}
+                        {skill.verified_by_leader ? "Verificada" : "Pendiente"}
                       </span>
+                    </div>
+
+                    <div className="mt-4 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleEditSkill(skill)}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-all"
+                      >
+                        <Pencil className="w-4 h-4" />
+                        Editar
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSkill(skill)}
+                        disabled={deletingSkillId === skill.id}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-all disabled:opacity-60"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        {deletingSkillId === skill.id ? "Eliminando..." : "Eliminar"}
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="flex items-center justify-center p-8 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-500">No hay skills registradas todavía</p>
+                <p className="text-slate-500">No hay habilidades registradas todavía</p>
               </div>
             )}
           </div>
@@ -325,73 +594,20 @@ export default function MemberProfile() {
                     </div>
 
                     <div className="flex items-center gap-4 text-sm text-slate-400 flex-wrap">
-                      <span>Complejidad: {task.complexity}/5</span>
-                      <span>•</span>
-                      <span>{task.estimated_hours ?? 0} h estimadas</span>
-                      <span>•</span>
-                      <span className="text-cyan-400">{statusLabels[task.status] ?? task.status}</span>
+                      <span>Estado: {statusLabels[task.status] ?? task.status}</span>
+                      <span>Complejidad: {task.complexity}</span>
+                      <span>
+                        Estimado: {task.estimated_hours !== null && task.estimated_hours !== undefined
+                          ? `${task.estimated_hours} h`
+                          : "No definido"}
+                      </span>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
               <div className="flex items-center justify-center p-8 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-500">No hay tareas activas</p>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <CheckCircle className="w-5 h-5 text-green-400" />
-              <h2 className="text-xl text-white">Tareas completadas recientemente</h2>
-            </div>
-
-            {member.completed_task_items.length > 0 ? (
-              <div className="space-y-3">
-                {member.completed_task_items.slice(0, 3).map((task) => (
-                  <div
-                    key={task.id}
-                    className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg cursor-pointer"
-                    onClick={() => navigate(`/task/${task.id}`)}
-                  >
-                    <div className="flex items-start justify-between mb-2 gap-3">
-                      <h3 className="text-white">{task.title}</h3>
-                      <CheckCircle className="w-5 h-5 text-green-400" />
-                    </div>
-
-                    <div className="flex items-center gap-4 text-sm text-slate-400 flex-wrap">
-                      {task.actual_hours !== null &&
-                      task.actual_hours !== undefined &&
-                      task.estimated_hours !== null &&
-                      task.estimated_hours !== undefined ? (
-                        <>
-                          <span>
-                            {task.actual_hours} h / {task.estimated_hours} h
-                          </span>
-                          <span>•</span>
-                          <span
-                            className={
-                              task.actual_hours <= task.estimated_hours
-                                ? "text-green-400"
-                                : "text-yellow-400"
-                            }
-                          >
-                            {task.actual_hours <= task.estimated_hours
-                              ? "Dentro del tiempo previsto"
-                              : "Tiempo extendido"}
-                          </span>
-                        </>
-                      ) : (
-                        <span>Sin datos de comparación de tiempo</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center p-8 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-500">No hay tareas completadas todavía</p>
+                <p className="text-slate-500">No tiene tareas activas actualmente</p>
               </div>
             )}
           </div>

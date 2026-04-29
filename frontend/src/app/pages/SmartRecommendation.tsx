@@ -1,6 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { BrainCircuit, Sparkles, User } from "lucide-react";
+import {
+  BrainCircuit,
+  Sparkles,
+  User,
+  FolderKanban,
+  CheckSquare,
+  ArrowLeft,
+  ShieldCheck,
+} from "lucide-react";
 import { getTaskById, assignTask, type TaskResponse } from "../services/taskService";
 import {
   getTaskInsights,
@@ -102,6 +110,10 @@ function getActiveTasksChangeLabel(simulation: TaskSimulationItem) {
   if (change > 0) return `+${change} tarea${change > 1 ? "s" : ""}`;
   if (change < 0) return `${change} tarea${Math.abs(change) > 1 ? "s" : ""}`;
   return "Sin cambio";
+}
+
+function getTopRecommendation(recommendationData: TaskRecommendationResponse | null) {
+  return recommendationData?.recommendations?.[0] ?? null;
 }
 
 export default function SmartRecommendation() {
@@ -206,7 +218,7 @@ export default function SmartRecommendation() {
         {
           assigned_to: rec.member.id,
           assigned_by: currentUser.id,
-          source: "recommended",
+          source: selectedMode === "hybrid" ? "hybrid" : "recommended",
           strategy: recommendationData.strategy,
           recommendation_score: rec.score,
           risk_level: rec.risk_level,
@@ -217,7 +229,7 @@ export default function SmartRecommendation() {
       );
 
       setSuccessMessage(
-        `La tarea fue asignada a ${rec.member.full_name} y la decisión quedó registrada.`
+        `La tarea fue asignada a ${rec.member.full_name} y la decisión quedó registrada correctamente.`
       );
 
       setTimeout(() => {
@@ -235,6 +247,11 @@ export default function SmartRecommendation() {
     if (!insightData) return;
     setSelectedStrategy(insightData.suggested_strategy);
   };
+
+  const topRecommendation = useMemo(
+    () => getTopRecommendation(recommendationData),
+    [recommendationData]
+  );
 
   if (loading) {
     return <div className="text-slate-300">Cargando recomendación...</div>;
@@ -273,12 +290,31 @@ export default function SmartRecommendation() {
           </p>
         </div>
 
-        <button
-          onClick={() => navigate(`/task/${taskId}`)}
-          className="px-4 py-2 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700 transition-all"
-        >
-          Volver al detalle
-        </button>
+        <div className="flex gap-3 flex-wrap">
+          <button
+            onClick={() => navigate(`/task/${taskId}`)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700 transition-all"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Volver al detalle
+          </button>
+
+          <button
+            onClick={() => navigate(`/projects/${task.project_id}`)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700 transition-all"
+          >
+            <FolderKanban className="w-4 h-4" />
+            Ver proyecto
+          </button>
+
+          <button
+            onClick={() => navigate(`/kanban/${task.project_id}`)}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg border border-slate-700 hover:bg-slate-700 transition-all"
+          >
+            <CheckSquare className="w-4 h-4" />
+            Ver Kanban
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -346,6 +382,56 @@ export default function SmartRecommendation() {
           </div>
         </div>
       </div>
+
+      {topRecommendation && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <ShieldCheck className="w-5 h-5 text-green-400" />
+            <h2 className="text-xl text-white">Resumen de la mejor opción</h2>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+            <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+              <p className="text-slate-400 text-xs mb-1">Integrante recomendado</p>
+              <button
+                onClick={() => navigate(`/member/${topRecommendation.member.id}`)}
+                className="text-white hover:text-cyan-400 transition-colors"
+              >
+                {topRecommendation.member.full_name}
+              </button>
+              <p className="text-slate-500 text-xs mt-1">
+                {roleLabels[topRecommendation.member.role_name] ?? topRecommendation.member.role_name}
+              </p>
+            </div>
+
+            <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+              <p className="text-slate-400 text-xs mb-1">Puntaje final</p>
+              <p className="text-white text-xl">{topRecommendation.score}%</p>
+            </div>
+
+            <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+              <p className="text-slate-400 text-xs mb-1">Riesgo</p>
+              <span
+                className={`inline-flex text-sm px-2 py-1 rounded border ${
+                  riskColors[topRecommendation.risk_level]
+                }`}
+              >
+                {riskLabels[topRecommendation.risk_level]}
+              </span>
+            </div>
+
+            <div className="p-4 bg-slate-800/50 rounded-lg border border-slate-700">
+              <p className="text-slate-400 text-xs mb-1">Modo activo</p>
+              <p className="text-white">
+                {selectedMode === "hybrid" ? "Híbrido" : "Heurístico"}
+              </p>
+              <p className="text-slate-500 text-xs mt-1">
+                {topRecommendation.model_used ? "Con apoyo del baseline" : "Solo reglas explicables"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <TaskInsightsPanel
         insightData={insightData}
@@ -427,7 +513,10 @@ export default function SmartRecommendation() {
         simulationsCount={simulationData?.simulations.length ?? 0}
         urgencyLabel={daysRemaining(task.due_date)}
         modeLabel={selectedMode === "hybrid" ? "Híbrido" : "Heurístico"}
-        modelActive={selectedMode === "hybrid" && Boolean(recommendationData?.recommendations?.some((rec) => rec.model_used))}
+        modelActive={
+          selectedMode === "hybrid" &&
+          Boolean(recommendationData?.recommendations?.some((rec) => rec.model_used))
+        }
       />
 
       <div className="space-y-4">
@@ -518,10 +607,11 @@ export default function SmartRecommendation() {
           <User className="w-5 h-5 text-cyan-400 mt-1" />
           <div>
             <h3 className="text-white mb-2">Sobre esta recomendación</h3>
-            <p className="text-slate-400 text-sm">
-              Esta vista interpreta la tarea, usa habilidades requeridas reales, compara escenarios
-              antes de decidir y ahora también permite demostrar la diferencia entre el modo
-              heurístico y el modo híbrido con apoyo del modelo baseline.
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Esta vista compara integrantes reales del proyecto usando habilidades, disponibilidad,
+              carga actual, estrategia de asignación y simulación del impacto antes de confirmar la
+              decisión. En modo híbrido, además incorpora la probabilidad estimada por el baseline
+              para enriquecer el análisis.
             </p>
           </div>
         </div>

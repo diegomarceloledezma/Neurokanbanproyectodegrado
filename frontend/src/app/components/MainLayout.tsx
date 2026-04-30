@@ -9,55 +9,23 @@ import {
   Bell,
   LogOut,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { clearSession, getAccessToken, getStoredUser } from "../services/sessionService";
-import { getProjects, type ProjectResponse } from "../services/projectService";
+import { useMemo } from "react";
+import { clearSession, getStoredUser } from "../services/sessionService";
 
 export default function MainLayout() {
   const navigate = useNavigate();
   const currentUser = getStoredUser();
 
-  const [projects, setProjects] = useState<ProjectResponse[]>([]);
-
-  useEffect(() => {
-    const loadProjects = async () => {
-      const token = getAccessToken();
-
-      if (!token) return;
-
-      try {
-        const data = await getProjects(token);
-        setProjects(data);
-      } catch (error) {
-        console.error("No se pudieron cargar los proyectos para el menú lateral", error);
-      }
-    };
-
-    loadProjects();
-  }, []);
-
-  const firstProjectId = projects.length > 0 ? projects[0].id : null;
-
   const menuItems = useMemo(
     () => [
       { name: "Panel principal", path: "/", icon: LayoutDashboard, disabled: false },
-      {
-        name: "Proyectos",
-        path: "/projects",
-        icon: FolderKanban,
-        disabled: false,
-      },
-      {
-        name: "Tablero Kanban",
-        path: firstProjectId ? `/kanban/${firstProjectId}` : "#",
-        icon: CheckSquare,
-        disabled: !firstProjectId,
-      },
+      { name: "Proyectos", path: "/projects", icon: FolderKanban, disabled: false },
+      { name: "Tablero Kanban", path: "/kanban", icon: CheckSquare, disabled: false },
       { name: "Equipo", path: "/team", icon: Users, disabled: false },
       { name: "Métricas", path: "/metrics", icon: BarChart3, disabled: false },
       { name: "Historial de decisiones", path: "/history", icon: History, disabled: false },
     ],
-    [firstProjectId]
+    []
   );
 
   const displayName = currentUser?.full_name ?? "Usuario";

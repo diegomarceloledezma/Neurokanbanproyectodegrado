@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import Projects from "./pages/Projects";
 import Project from "./pages/Project";
 import Team from "./pages/Team";
+import KanbanProjects from "./pages/KanbanProjects";
 import KanbanBoard from "./pages/KanbanBoard";
 import CreateTask from "./pages/CreateTask";
 import TaskDetail from "./pages/TaskDetail";
@@ -37,6 +38,7 @@ export const router = createBrowserRouter([
       { path: "projects", Component: Projects },
       { path: "projects/:projectId", Component: Project },
       { path: "team", Component: Team },
+      { path: "kanban", Component: KanbanProjects },
       { path: "kanban/:projectId", Component: KanbanBoard },
       { path: "task/create/:projectId", Component: CreateTask },
       { path: "task/:taskId", Component: TaskDetail },

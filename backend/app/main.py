@@ -15,6 +15,7 @@ from app.routes.analytics import router as analytics_router
 from app.routes.ml_baseline import router as ml_baseline_router
 from app.routes.demo_setup import router as demo_setup_router
 from app.routes.dashboard import router as dashboard_router
+from app.routes.decision_history import router as decision_history_router
 
 app = FastAPI(title=APP_NAME)
 
@@ -40,6 +41,7 @@ app.include_router(analytics_router)
 app.include_router(ml_baseline_router)
 app.include_router(demo_setup_router)
 app.include_router(dashboard_router)
+app.include_router(decision_history_router)
 
 
 @app.get("/")

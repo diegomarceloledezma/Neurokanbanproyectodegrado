@@ -534,3 +534,26 @@ class DashboardTeamMetricsResponse(BaseModel):
     performance_data: List[DashboardValuePoint]
     time_comparison_data: List[DashboardValuePoint]
     team_members: List[DashboardTeamMemberMetricItem]
+
+
+class DecisionHistoryItem(BaseModel):
+    id: int
+    task_id: int
+    task_title: str
+    project_id: int
+    task_status: str
+    assigned_user_id: int
+    assigned_user_name: str
+    assigned_user_role: str
+    source: str
+    strategy: Optional[str] = None
+    recommendation_score: float = 0
+    risk_level: Optional[str] = None
+    reason: Optional[str] = None
+    recommendation_used: Optional[bool] = None
+    created_at: datetime
+
+
+class DecisionHistoryResponse(BaseModel):
+    total_records: int
+    items: List[DecisionHistoryItem]

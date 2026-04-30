@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { UserPlus, UserX, Users } from "lucide-react";
+import { UserPlus, UserX, Users, CheckSquare } from "lucide-react";
 import {
   addMemberToProject,
   getAvailableUsersForProject,
@@ -173,10 +173,23 @@ export default function Project() {
         <Link to="/projects" className="text-cyan-400 hover:text-cyan-300 text-sm">
           ← Volver a proyectos
         </Link>
-        <h1 className="text-3xl text-white mt-3">{project.name}</h1>
-        <p className="text-slate-400 mt-2">
-          {project.description || "Sin descripción registrada para este proyecto."}
-        </p>
+
+        <div className="flex items-start justify-between gap-4 mt-3 flex-wrap">
+          <div>
+            <h1 className="text-3xl text-white">{project.name}</h1>
+            <p className="text-slate-400 mt-2">
+              {project.description || "Sin descripción registrada para este proyecto."}
+            </p>
+          </div>
+
+          <button
+            onClick={() => navigate(`/kanban/${project.id}`)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all"
+          >
+            <CheckSquare className="w-4 h-4" />
+            Ver tablero Kanban
+          </button>
+        </div>
       </div>
 
       {error && (

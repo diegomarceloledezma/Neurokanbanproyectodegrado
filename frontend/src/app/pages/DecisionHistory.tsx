@@ -1,34 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
-import { Clock, Filter, Sparkles, UserCheck, ShieldAlert, FolderKanban } from "lucide-react";
-import { getAssignmentHistory, type AssignmentHistoryResponse } from "../services/taskService";
-import { getProjects, type ProjectResponse } from "../services/projectService";
-import { getAccessToken } from "../services/sessionService";
 import { useNavigate } from "react-router";
+import {
+  History,
+  Filter,
+  FolderKanban,
+  User,
+  Sparkles,
+  ShieldCheck,
+  CheckCircle,
+} from "lucide-react";
+import { getAccessToken } from "../services/sessionService";
+import { getProjects, type ProjectResponse } from "../services/projectService";
+import {
+  getDecisionHistory,
+  type DecisionHistoryItem,
+} from "../services/decisionHistoryService";
 
 const sourceLabels: Record<string, string> = {
   manual: "Manual",
-  recommended: "Recomendación aplicada",
-  simulated: "Basada en simulación",
-  hybrid: "Híbrida",
-};
-
-const riskColors: Record<string, string> = {
-  low: "text-green-400 bg-green-500/10 border-green-500/20",
-  medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
-  high: "text-red-400 bg-red-500/10 border-red-500/20",
-};
-
-const priorityLabels: Record<string, string> = {
-  low: "Baja",
-  medium: "Media",
-  high: "Alta",
-  critical: "Crítica",
-};
-
-const roleLabels: Record<string, string> = {
-  leader: "Líder de equipo",
-  member: "Integrante del equipo",
-  admin: "Administrador",
+  recommended: "Recomendado",
+  hybrid: "Híbrido",
 };
 
 const strategyLabels: Record<string, string> = {
@@ -38,11 +29,29 @@ const strategyLabels: Record<string, string> = {
   learning: "Aprendizaje",
 };
 
+const roleLabels: Record<string, string> = {
+  leader: "Líder de equipo",
+  member: "Integrante del equipo",
+  admin: "Administrador",
+};
+
+const riskColors: Record<string, string> = {
+  low: "text-green-400 bg-green-500/10 border-green-500/20",
+  medium: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
+  high: "text-red-400 bg-red-500/10 border-red-500/20",
+};
+
+const riskLabels: Record<string, string> = {
+  low: "Riesgo bajo",
+  medium: "Riesgo medio",
+  high: "Riesgo alto",
+};
+
 function formatDateTime(value: string) {
   return new Date(value).toLocaleString("es-ES", {
     year: "numeric",
     month: "short",
-    day: "numeric",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -50,95 +59,87 @@ function formatDateTime(value: string) {
 
 export default function DecisionHistory() {
   const navigate = useNavigate();
-  const [history, setHistory] = useState<AssignmentHistoryResponse[]>([]);
+  const token = getAccessToken();
+
   const [projects, setProjects] = useState<ProjectResponse[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [items, setItems] = useState<DecisionHistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  const [selectedProjectId, setSelectedProjectId] = useState("");
+  const [selectedSource, setSelectedSource] = useState("");
+  const [selectedStrategy, setSelectedStrategy] = useState("");
+
   useEffect(() => {
-    const token = getAccessToken();
-    if (!token) {
-      navigate("/login");
-      return;
-    }
+    const loadProjects = async () => {
+      if (!token) {
+        navigate("/login");
+        return;
+      }
 
-    const loadInitialData = async () => {
       try {
-        setLoading(true);
-        setError("");
-
-        const [projectData, historyData] = await Promise.all([
-          getProjects(token),
-          getAssignmentHistory(token),
-        ]);
-
-        setProjects(projectData);
-        setHistory(historyData);
+        const data = await getProjects(token);
+        setProjects(data);
       } catch (err) {
-        if (err instanceof Error) setError(err.message);
-        else setError("No se pudo cargar el historial de decisiones");
-      } finally {
-        setLoading(false);
+        console.error(err);
       }
     };
 
-    loadInitialData();
-  }, [navigate]);
+    loadProjects();
+  }, [token, navigate]);
 
   useEffect(() => {
-    const token = getAccessToken();
-    if (!token) return;
-
     const loadHistory = async () => {
+      if (!token) {
+        navigate("/login");
+        return;
+      }
+
       try {
         setLoading(true);
         setError("");
-        const historyData = await getAssignmentHistory(token, selectedProjectId || undefined);
-        setHistory(historyData);
+
+        const response = await getDecisionHistory(token, {
+          project_id: selectedProjectId ? Number(selectedProjectId) : undefined,
+          source: selectedSource || undefined,
+          strategy: selectedStrategy || undefined,
+          limit: 100,
+        });
+
+        setItems(response.items);
       } catch (err) {
         if (err instanceof Error) setError(err.message);
-        else setError("No se pudo actualizar el historial");
+        else setError("No se pudo cargar el historial de decisiones.");
       } finally {
         setLoading(false);
       }
     };
 
     loadHistory();
-  }, [selectedProjectId]);
+  }, [token, navigate, selectedProjectId, selectedSource, selectedStrategy]);
 
-  const stats = useMemo(() => {
-    const total = history.length;
-    const usingRecommendation = history.filter((item) => item.recommendation_used).length;
-    const recommendedSource = history.filter((item) => item.source === "recommended").length;
-    const highRisk = history.filter((item) => item.risk_level === "high").length;
-
+  const summary = useMemo(() => {
     return {
-      total,
-      usingRecommendation,
-      recommendedSource,
-      highRisk,
+      total: items.length,
+      manual: items.filter((item) => item.source === "manual").length,
+      recommended: items.filter((item) => item.source === "recommended").length,
+      hybrid: items.filter((item) => item.source === "hybrid").length,
     };
-  }, [history]);
+  }, [items]);
 
-  if (loading && history.length === 0) {
+  if (loading) {
     return <div className="text-slate-300">Cargando historial de decisiones...</div>;
   }
 
-  if (error && history.length === 0) {
-    return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        {error}
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6">
+    <div className="max-w-7xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl text-white mb-2">Historial de decisiones</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <History className="w-6 h-6 text-cyan-400" />
+          <h1 className="text-3xl text-white">Historial de decisiones</h1>
+        </div>
         <p className="text-slate-400">
-          Revisa las asignaciones registradas por el sistema y la trazabilidad de cada decisión.
+          Revisa las asignaciones registradas, su origen, estrategia y contexto de decisión.
         </p>
       </div>
 
@@ -149,25 +150,18 @@ export default function DecisionHistory() {
       )}
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex flex-col md:flex-row gap-4 md:items-end md:justify-between">
-          <div>
-            <h2 className="text-xl text-white mb-2">Filtros</h2>
-            <p className="text-slate-400 text-sm">
-              Puedes revisar todo el historial o filtrarlo por proyecto.
-            </p>
-          </div>
+        <div className="flex items-center gap-3 mb-4">
+          <Filter className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-xl text-white">Filtros</h2>
+        </div>
 
-          <div className="min-w-[280px]">
-            <label className="block text-sm text-slate-300 mb-2">
-              <span className="inline-flex items-center gap-2">
-                <Filter className="w-4 h-4" />
-                Proyecto
-              </span>
-            </label>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Proyecto</label>
             <select
               value={selectedProjectId}
               onChange={(e) => setSelectedProjectId(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
             >
               <option value="">Todos los proyectos</option>
               {projects.map((project) => (
@@ -177,186 +171,167 @@ export default function DecisionHistory() {
               ))}
             </select>
           </div>
+
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Origen</label>
+            <select
+              value={selectedSource}
+              onChange={(e) => setSelectedSource(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+            >
+              <option value="">Todos</option>
+              <option value="manual">Manual</option>
+              <option value="recommended">Recomendado</option>
+              <option value="hybrid">Híbrido</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Estrategia</label>
+            <select
+              value={selectedStrategy}
+              onChange={(e) => setSelectedStrategy(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+            >
+              <option value="">Todas</option>
+              <option value="balance">Balance</option>
+              <option value="efficiency">Eficiencia</option>
+              <option value="urgency">Urgencia</option>
+              <option value="learning">Aprendizaje</option>
+            </select>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-cyan-500/10 rounded-lg">
-              <Clock className="w-6 h-6 text-cyan-400" />
-            </div>
-            <span className="text-3xl text-white">{stats.total}</span>
-          </div>
-          <h3 className="text-slate-400 text-sm">Decisiones registradas</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+          <p className="text-slate-400 text-xs mb-1">Total</p>
+          <p className="text-white text-2xl">{summary.total}</p>
         </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-purple-500/10 rounded-lg">
-              <Sparkles className="w-6 h-6 text-purple-400" />
-            </div>
-            <span className="text-3xl text-white">{stats.usingRecommendation}</span>
-          </div>
-          <h3 className="text-slate-400 text-sm">Usaron recomendación</h3>
+        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+          <p className="text-slate-400 text-xs mb-1">Manuales</p>
+          <p className="text-white text-2xl">{summary.manual}</p>
         </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-green-500/10 rounded-lg">
-              <UserCheck className="w-6 h-6 text-green-400" />
-            </div>
-            <span className="text-3xl text-white">{stats.recommendedSource}</span>
-          </div>
-          <h3 className="text-slate-400 text-sm">Asignadas desde IA</h3>
+        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+          <p className="text-slate-400 text-xs mb-1">Recomendadas</p>
+          <p className="text-white text-2xl">{summary.recommended}</p>
         </div>
-
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="p-3 bg-red-500/10 rounded-lg">
-              <ShieldAlert className="w-6 h-6 text-red-400" />
-            </div>
-            <span className="text-3xl text-white">{stats.highRisk}</span>
-          </div>
-          <h3 className="text-slate-400 text-sm">Decisiones de alto riesgo</h3>
+        <div className="p-4 rounded-xl bg-slate-900 border border-slate-800">
+          <p className="text-slate-400 text-xs mb-1">Híbridas</p>
+          <p className="text-white text-2xl">{summary.hybrid}</p>
         </div>
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-slate-800/50 border-b border-slate-700">
-              <tr>
-                <th className="text-left p-4 text-slate-300 text-sm">Tarea</th>
-                <th className="text-left p-4 text-slate-300 text-sm">Asignado a</th>
-                <th className="text-left p-4 text-slate-300 text-sm">Fuente</th>
-                <th className="text-left p-4 text-slate-300 text-sm">Estrategia</th>
-                <th className="text-left p-4 text-slate-300 text-sm">Riesgo</th>
-                <th className="text-left p-4 text-slate-300 text-sm">Fecha</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {history.map((record) => (
-                <tr key={record.id} className="hover:bg-slate-800/30 transition-colors">
-                  <td className="p-4">
-                    <div>
-                      <button
-                        onClick={() => navigate(`/task/${record.task.id}`)}
-                        className="text-white hover:text-cyan-400 transition-colors text-left"
-                      >
-                        {record.task.title}
-                      </button>
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        <span className="text-xs px-2 py-1 rounded bg-slate-700 text-slate-300">
-                          Proyecto #{record.task.project_id}
-                        </span>
-                        <span
-                          className={`text-xs px-2 py-1 rounded ${
-                            record.task.priority === "critical"
-                              ? "bg-red-500/10 text-red-400"
-                              : record.task.priority === "high"
-                              ? "bg-orange-500/10 text-orange-400"
-                              : record.task.priority === "medium"
-                              ? "bg-yellow-500/10 text-yellow-400"
-                              : "bg-slate-500/10 text-slate-400"
-                          }`}
-                        >
-                          {priorityLabels[record.task.priority] ?? record.task.priority}
-                        </span>
-                        <span className="text-slate-500 text-xs">
-                          Complejidad: {record.task.complexity}/5
-                        </span>
-                      </div>
-                    </div>
-                  </td>
+      <div className="space-y-4">
+        {items.length > 0 ? (
+          items.map((item) => (
+            <div
+              key={item.id}
+              className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4"
+            >
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <button
+                    onClick={() => navigate(`/task/${item.task_id}`)}
+                    className="text-left text-white text-lg hover:text-cyan-400 transition-colors"
+                  >
+                    {item.task_title}
+                  </button>
+                  <p className="text-slate-500 text-sm mt-1">
+                    Registrado el {formatDateTime(item.created_at)}
+                  </p>
+                </div>
 
-                  <td className="p-4">
-                    <div>
-                      <button
-                        onClick={() => navigate(`/member/${record.assigned_user.id}`)}
-                        className="text-white hover:text-cyan-400 transition-colors text-left"
-                      >
-                        {record.assigned_user.full_name}
-                      </button>
-                      <p className="text-slate-400 text-xs">
-                        {roleLabels[record.assigned_user.global_role?.name ?? "member"] ??
-                          record.assigned_user.global_role?.name ??
-                          "Integrante"}
-                      </p>
-                    </div>
-                  </td>
+                <div className="flex gap-2 flex-wrap">
+                  <span className="px-3 py-1 rounded-lg text-sm bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
+                    {sourceLabels[item.source] ?? item.source}
+                  </span>
 
-                  <td className="p-4">
-                    <div className="space-y-2">
-                      <span className="inline-flex items-center gap-2 px-2 py-1 rounded bg-slate-800 text-slate-300 text-sm border border-slate-700">
-                        {record.source === "recommended" && <Sparkles className="w-3 h-3 text-cyan-400" />}
-                        {sourceLabels[record.source] ?? record.source}
-                      </span>
-                      {record.recommendation_used && (
-                        <p className="text-xs text-cyan-400">Se siguió la sugerencia del sistema</p>
-                      )}
-                    </div>
-                  </td>
+                  <span className="px-3 py-1 rounded-lg text-sm bg-slate-800 border border-slate-700 text-slate-300">
+                    {item.strategy ? strategyLabels[item.strategy] ?? item.strategy : "Sin estrategia"}
+                  </span>
 
-                  <td className="p-4">
-                    <div>
-                      <p className="text-white text-sm">
-                        {record.strategy ? strategyLabels[record.strategy] ?? record.strategy : "No definida"}
-                      </p>
-                      {record.recommendation_score !== null &&
-                        record.recommendation_score !== undefined && (
-                          <p className="text-slate-400 text-xs">
-                            Score: {record.recommendation_score}
-                          </p>
-                        )}
-                    </div>
-                  </td>
+                  {item.risk_level && (
+                    <span
+                      className={`px-3 py-1 rounded-lg text-sm border ${
+                        riskColors[item.risk_level] ?? "text-slate-300 bg-slate-800 border-slate-700"
+                      }`}
+                    >
+                      {riskLabels[item.risk_level] ?? item.risk_level}
+                    </span>
+                  )}
+                </div>
+              </div>
 
-                  <td className="p-4">
-                    {record.risk_level ? (
-                      <span
-                        className={`inline-block text-sm px-2 py-1 rounded border ${
-                          riskColors[record.risk_level] ?? "text-slate-300 bg-slate-800 border-slate-700"
-                        }`}
-                      >
-                        {record.risk_level}
-                      </span>
-                    ) : (
-                      <span className="text-slate-500 text-sm">No definido</span>
-                    )}
-                  </td>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <User className="w-4 h-4 text-cyan-400" />
+                    <p className="text-slate-400 text-xs">Integrante asignado</p>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/member/${item.assigned_user_id}`)}
+                    className="text-white hover:text-cyan-400 transition-colors"
+                  >
+                    {item.assigned_user_name}
+                  </button>
+                  <p className="text-slate-500 text-xs mt-1">
+                    {roleLabels[item.assigned_user_role] ?? item.assigned_user_role}
+                  </p>
+                </div>
 
-                  <td className="p-4">
-                    <div className="text-slate-300 text-sm">{formatDateTime(record.created_at)}</div>
-                    {record.assigned_by_user && (
-                      <p className="text-slate-500 text-xs mt-1">
-                        Por: {record.assigned_by_user.full_name}
-                      </p>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Sparkles className="w-4 h-4 text-purple-400" />
+                    <p className="text-slate-400 text-xs">Puntaje</p>
+                  </div>
+                  <p className="text-white text-xl">{item.recommendation_score.toFixed(2)}</p>
+                </div>
 
-        {history.length === 0 && (
-          <div className="flex flex-col items-center justify-center p-12 bg-slate-800/30 text-center">
-            <FolderKanban className="w-10 h-10 text-slate-600 mb-3" />
-            <p className="text-slate-400">Todavía no hay decisiones registradas.</p>
-            <p className="text-slate-500 text-sm mt-1">
-              Asigna una tarea desde la pantalla de recomendación para empezar a construir trazabilidad.
-            </p>
+                <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <FolderKanban className="w-4 h-4 text-cyan-400" />
+                    <p className="text-slate-400 text-xs">Proyecto</p>
+                  </div>
+                  <button
+                    onClick={() => navigate(`/projects/${item.project_id}`)}
+                    className="text-white hover:text-cyan-400 transition-colors"
+                  >
+                    Ver proyecto #{item.project_id}
+                  </button>
+                </div>
+
+                <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle className="w-4 h-4 text-green-400" />
+                    <p className="text-slate-400 text-xs">Uso de recomendación</p>
+                  </div>
+                  <p className="text-white">
+                    {item.recommendation_used === true
+                      ? "Sí"
+                      : item.recommendation_used === false
+                      ? "No"
+                      : "No definido"}
+                  </p>
+                </div>
+              </div>
+
+              {item.reason && (
+                <div className="p-4 rounded-xl bg-slate-800/30 border border-slate-700">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                    <p className="text-slate-400 text-xs">Motivo registrado</p>
+                  </div>
+                  <p className="text-slate-300 text-sm leading-relaxed">{item.reason}</p>
+                </div>
+              )}
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
+            No hay decisiones registradas con los filtros actuales.
           </div>
         )}
-      </div>
-
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <p className="text-slate-400 text-sm">
-          Esta vista ya muestra trazabilidad real del sistema. En la siguiente fase podremos
-          enriquecerla con outcomes, cumplimiento de plazos y comparación entre recomendación,
-          decisión final y resultado obtenido.
-        </p>
       </div>
     </div>
   );

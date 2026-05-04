@@ -19,7 +19,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sqlalchemy.orm import Session
 
 from app.models import Project, Task, TaskAssignmentHistory, TaskOutcome
@@ -28,7 +28,7 @@ ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "ml_artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "baseline_success_model.joblib"
 METADATA_PATH = ARTIFACTS_DIR / "baseline_success_model_metadata.json"
 
-NUMERIC_FEATURES = [
+NUMERIC_FEATURES_FULL = [
     "recommendation_score",
     "workload_score",
     "skill_match_score",
@@ -44,8 +44,24 @@ NUMERIC_FEATURES = [
     "complexity_snapshot",
 ]
 
-CATEGORICAL_FEATURES = [
+CATEGORICAL_FEATURES_FULL = [
     "source",
+    "strategy",
+    "priority_snapshot",
+]
+
+NUMERIC_FEATURES_COMPACT = [
+    "recommendation_score",
+    "skill_match_score",
+    "performance_score",
+    "current_load_snapshot",
+    "required_skills_count",
+    "matching_ratio",
+    "estimated_hours_snapshot",
+    "complexity_snapshot",
+]
+
+CATEGORICAL_FEATURES_COMPACT = [
     "strategy",
     "priority_snapshot",
 ]
@@ -101,6 +117,13 @@ def _compute_success_score_from_outcome(
 
 def _compute_success_label(success_score: float) -> int:
     return 1 if float(success_score) >= 65.0 else 0
+
+
+def _get_feature_sets(training_variant: str) -> tuple[list[str], list[str]]:
+    if training_variant == "compact_cleaned_history":
+        return NUMERIC_FEATURES_COMPACT, CATEGORICAL_FEATURES_COMPACT
+
+    return NUMERIC_FEATURES_FULL, CATEGORICAL_FEATURES_FULL
 
 
 def fetch_training_dataframe(db: Session, project_id: int | None = None) -> pd.DataFrame:
@@ -171,10 +194,15 @@ def fetch_training_dataframe(db: Session, project_id: int | None = None) -> pd.D
     return pd.DataFrame(data)
 
 
-def _build_pipeline() -> Pipeline:
+def _build_pipeline(
+    *,
+    numeric_features: list[str],
+    categorical_features: list[str],
+) -> Pipeline:
     numeric_transformer = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
+            ("scaler", StandardScaler()),
         ]
     )
 
@@ -187,13 +215,13 @@ def _build_pipeline() -> Pipeline:
 
     preprocessor = ColumnTransformer(
         transformers=[
-            ("num", numeric_transformer, NUMERIC_FEATURES),
-            ("cat", categorical_transformer, CATEGORICAL_FEATURES),
+            ("num", numeric_transformer, numeric_features),
+            ("cat", categorical_transformer, categorical_features),
         ]
     )
 
     classifier = LogisticRegression(
-        max_iter=1200,
+        max_iter=1500,
         class_weight="balanced",
         solver="liblinear",
         random_state=42,
@@ -228,6 +256,29 @@ def _extract_feature_importance(model: Pipeline) -> list[dict[str, float]]:
 
     rows.sort(key=lambda item: item["absolute_weight"], reverse=True)
     return rows[:15]
+
+
+def _build_sample_weights(X_train: pd.DataFrame, y_train: pd.Series) -> list[float]:
+    class_counts = y_train.value_counts().to_dict()
+    strategy_counts = X_train["strategy"].fillna("NO_DEFINIDO").value_counts().to_dict()
+
+    total_rows = len(X_train)
+    total_classes = max(len(class_counts), 1)
+    total_strategies = max(len(strategy_counts), 1)
+
+    weights: list[float] = []
+
+    for idx in X_train.index:
+        row_class = int(y_train.loc[idx])
+        row_strategy = X_train.loc[idx, "strategy"] if pd.notna(X_train.loc[idx, "strategy"]) else "NO_DEFINIDO"
+
+        class_weight = total_rows / (total_classes * class_counts.get(row_class, 1))
+        strategy_weight = total_rows / (total_strategies * strategy_counts.get(row_strategy, 1))
+
+        final_weight = (class_weight * 0.7) + (strategy_weight * 0.3)
+        weights.append(float(final_weight))
+
+    return weights
 
 
 def build_feature_payload(
@@ -275,11 +326,17 @@ def predict_success_probability_from_features(
     model: Pipeline | None = None,
 ) -> float | None:
     model_to_use = model or load_baseline_model()
-    if model_to_use is None:
+    metadata = load_baseline_metadata()
+
+    if model_to_use is None or metadata is None:
         return None
 
+    numeric_features = metadata.get("numeric_features", [])
+    categorical_features = metadata.get("categorical_features", [])
+    active_features = numeric_features + categorical_features
+
     feature_row = {}
-    for feature in NUMERIC_FEATURES + CATEGORICAL_FEATURES:
+    for feature in active_features:
         feature_row[feature] = features.get(feature)
 
     df = pd.DataFrame([feature_row])
@@ -295,6 +352,7 @@ def _train_pipeline_from_dataframe(
     source_name: str,
     test_size: float = 0.25,
     random_state: int = 42,
+    training_variant: str = "raw",
 ) -> dict[str, Any]:
     if df.empty:
         raise ValueError("No hay datos suficientes para entrenar el modelo baseline")
@@ -309,7 +367,9 @@ def _train_pipeline_from_dataframe(
     if len(df) < 30:
         raise ValueError("Se requieren al menos 30 registros para entrenar un baseline defendible")
 
-    feature_columns = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+    numeric_features, categorical_features = _get_feature_sets(training_variant)
+    feature_columns = numeric_features + categorical_features
+
     X = df[feature_columns].copy()
     y = df["success_label"].astype(int)
 
@@ -321,8 +381,13 @@ def _train_pipeline_from_dataframe(
         stratify=y,
     )
 
-    pipeline = _build_pipeline()
-    pipeline.fit(X_train, y_train)
+    sample_weights = _build_sample_weights(X_train, y_train)
+
+    pipeline = _build_pipeline(
+        numeric_features=numeric_features,
+        categorical_features=categorical_features,
+    )
+    pipeline.fit(X_train, y_train, classifier__sample_weight=sample_weights)
 
     y_pred = pipeline.predict(X_test)
     y_prob = pipeline.predict_proba(X_test)[:, 1]
@@ -344,6 +409,7 @@ def _train_pipeline_from_dataframe(
         "project_id": project_id,
         "project_name": project_name,
         "training_source": source_name,
+        "training_variant": training_variant,
         "dataset_rows": int(len(df)),
         "train_rows": int(len(X_train)),
         "test_rows": int(len(X_test)),
@@ -351,8 +417,8 @@ def _train_pipeline_from_dataframe(
         "test_size": test_size,
         "random_state": random_state,
         "metrics": metrics,
-        "numeric_features": NUMERIC_FEATURES,
-        "categorical_features": CATEGORICAL_FEATURES,
+        "numeric_features": numeric_features,
+        "categorical_features": categorical_features,
         "top_coefficients": _extract_feature_importance(pipeline),
         "classification_report": classification_report(
             y_test,
@@ -391,6 +457,7 @@ def train_baseline_model(
         source_name="database_training_history",
         test_size=test_size,
         random_state=random_state,
+        training_variant="raw_database",
     )
 
 
@@ -402,6 +469,7 @@ def train_baseline_model_from_rows(
     source_name: str = "historical_internal_data",
     test_size: float = 0.25,
     random_state: int = 42,
+    training_variant: str = "raw_rows",
 ) -> dict[str, Any]:
     df = pd.DataFrame(rows)
 
@@ -412,6 +480,7 @@ def train_baseline_model_from_rows(
         source_name=source_name,
         test_size=test_size,
         random_state=random_state,
+        training_variant=training_variant,
     )
 
 
@@ -449,14 +518,16 @@ def preview_predictions(
     limit: int = 20,
 ) -> dict[str, Any]:
     model = load_baseline_model()
-    if model is None:
+    metadata = load_baseline_metadata()
+
+    if model is None or metadata is None:
         raise ValueError("El modelo baseline todavía no fue entrenado")
 
     df = fetch_training_dataframe(db, project_id=project_id)
     if df.empty:
         raise ValueError("No hay datos disponibles para previsualizar")
 
-    feature_columns = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+    feature_columns = metadata.get("numeric_features", []) + metadata.get("categorical_features", [])
     preview_df = df.tail(limit).copy()
     probabilities = model.predict_proba(preview_df[feature_columns])[:, 1]
     predicted_labels = model.predict(preview_df[feature_columns])

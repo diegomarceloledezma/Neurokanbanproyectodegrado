@@ -2,146 +2,141 @@
   "model_type": "LogisticRegression",
   "target": "success_label",
   "project_id": null,
-  "project_name": "NeuroKanban - entrenamiento desde histórico interno",
-  "training_source": "historical_internal_data",
-  "dataset_rows": 300,
-  "train_rows": 225,
-  "test_rows": 75,
+  "project_name": "NeuroKanban - entrenamiento compacto depurado",
+  "training_source": "historical_internal_data_cleaned",
+  "training_variant": "compact_cleaned_history",
+  "dataset_rows": 211,
+  "train_rows": 158,
+  "test_rows": 53,
   "label_distribution": {
-    "0": 202,
-    "1": 98
+    "0": 139,
+    "1": 72
   },
   "test_size": 0.25,
   "random_state": 42,
   "metrics": {
-    "accuracy": 0.6667,
-    "precision": 0.4865,
-    "recall": 0.75,
-    "f1": 0.5902,
-    "roc_auc": 0.7508
+    "accuracy": 0.6604,
+    "precision": 0.5,
+    "recall": 0.7222,
+    "f1": 0.5909,
+    "roc_auc": 0.7571
   },
   "numeric_features": [
     "recommendation_score",
-    "workload_score",
     "skill_match_score",
-    "availability_score",
     "performance_score",
     "current_load_snapshot",
-    "availability_snapshot",
-    "active_tasks_snapshot",
     "required_skills_count",
-    "matching_skills_count",
     "matching_ratio",
     "estimated_hours_snapshot",
     "complexity_snapshot"
   ],
   "categorical_features": [
-    "source",
     "strategy",
     "priority_snapshot"
   ],
   "top_coefficients": [
     {
       "feature": "cat__strategy_efficiency",
-      "coefficient": -0.80837,
-      "absolute_weight": 0.80837
-    },
-    {
-      "feature": "num__required_skills_count",
-      "coefficient": -0.620813,
-      "absolute_weight": 0.620813
+      "coefficient": -1.633917,
+      "absolute_weight": 1.633917
     },
     {
       "feature": "cat__strategy_balance",
-      "coefficient": 0.550592,
-      "absolute_weight": 0.550592
+      "coefficient": 1.093043,
+      "absolute_weight": 1.093043
     },
     {
-      "feature": "num__matching_ratio",
-      "coefficient": -0.530207,
-      "absolute_weight": 0.530207
-    },
-    {
-      "feature": "num__matching_skills_count",
-      "coefficient": 0.340099,
-      "absolute_weight": 0.340099
-    },
-    {
-      "feature": "cat__priority_snapshot_low",
-      "coefficient": -0.316272,
-      "absolute_weight": 0.316272
-    },
-    {
-      "feature": "cat__strategy_urgency",
-      "coefficient": 0.172253,
-      "absolute_weight": 0.172253
-    },
-    {
-      "feature": "cat__priority_snapshot_medium",
-      "coefficient": 0.143279,
-      "absolute_weight": 0.143279
-    },
-    {
-      "feature": "cat__priority_snapshot_high",
-      "coefficient": 0.107966,
-      "absolute_weight": 0.107966
+      "feature": "num__skill_match_score",
+      "coefficient": 1.089484,
+      "absolute_weight": 1.089484
     },
     {
       "feature": "num__performance_score",
-      "coefficient": 0.105983,
-      "absolute_weight": 0.105983
+      "coefficient": 0.513696,
+      "absolute_weight": 0.513696
     },
     {
-      "feature": "cat__strategy_learning",
-      "coefficient": 0.084785,
-      "absolute_weight": 0.084785
+      "feature": "num__matching_ratio",
+      "coefficient": -0.293694,
+      "absolute_weight": 0.293694
     },
     {
-      "feature": "num__current_load_snapshot",
-      "coefficient": -0.074035,
-      "absolute_weight": 0.074035
+      "feature": "cat__priority_snapshot_low",
+      "coefficient": -0.273571,
+      "absolute_weight": 0.273571
+    },
+    {
+      "feature": "num__recommendation_score",
+      "coefficient": 0.215197,
+      "absolute_weight": 0.215197
+    },
+    {
+      "feature": "num__complexity_snapshot",
+      "coefficient": -0.214798,
+      "absolute_weight": 0.214798
+    },
+    {
+      "feature": "cat__priority_snapshot_high",
+      "coefficient": -0.20676,
+      "absolute_weight": 0.20676
     },
     {
       "feature": "cat__priority_snapshot_critical",
-      "coefficient": 0.064287,
-      "absolute_weight": 0.064287
+      "coefficient": 0.183661,
+      "absolute_weight": 0.183661
+    },
+    {
+      "feature": "num__required_skills_count",
+      "coefficient": 0.163507,
+      "absolute_weight": 0.163507
+    },
+    {
+      "feature": "cat__strategy_learning",
+      "coefficient": 0.157882,
+      "absolute_weight": 0.157882
+    },
+    {
+      "feature": "cat__priority_snapshot_medium",
+      "coefficient": -0.109421,
+      "absolute_weight": 0.109421
     },
     {
       "feature": "num__estimated_hours_snapshot",
-      "coefficient": -0.054543,
-      "absolute_weight": 0.054543
+      "coefficient": 0.079455,
+      "absolute_weight": 0.079455
     },
     {
-      "feature": "num__availability_score",
-      "coefficient": -0.052335,
-      "absolute_weight": 0.052335
+      "feature": "cat__strategy_urgency",
+      "coefficient": -0.023099,
+      "absolute_weight": 0.023099
     }
   ],
   "classification_report": {
     "0": {
-      "precision": 0.8421052631578947,
-      "recall": 0.6274509803921569,
-      "f1-score": 0.7191011235955056,
-      "support": 51.0
+      "precision": 0.8148148148148148,
+      "recall": 0.6285714285714286,
+      "f1-score": 0.7096774193548387,
+      "support": 35.0
     },
     "1": {
-      "precision": 0.4864864864864865,
-      "recall": 0.75,
-      "f1-score": 0.5901639344262295,
-      "support": 24.0
+      "precision": 0.5,
+      "recall": 0.7222222222222222,
+      "f1-score": 0.5909090909090909,
+      "support": 18.0
     },
-    "accuracy": 0.6666666666666666,
+    "accuracy": 0.660377358490566,
     "macro avg": {
-      "precision": 0.6642958748221905,
-      "recall": 0.6887254901960784,
-      "f1-score": 0.6546325290108675,
-      "support": 75.0
+      "precision": 0.6574074074074074,
+      "recall": 0.6753968253968254,
+      "f1-score": 0.6502932551319649,
+      "support": 53.0
     },
     "weighted avg": {
-      "precision": 0.7283072546230441,
-      "recall": 0.6666666666666666,
-      "f1-score": 0.6778412230613372,
-      "support": 75.0
+      "precision": 0.7078965758211041,
+      "recall": 0.660377358490566,
+      "f1-score": 0.6693410059204338,
+      "support": 53.0
     }
   }
 }

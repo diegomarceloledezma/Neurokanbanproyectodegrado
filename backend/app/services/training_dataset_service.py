@@ -6,6 +6,10 @@ from sqlalchemy.orm import Session
 
 from app.models import Task, TaskAssignmentHistory, TaskOutcome
 
+SUCCESS_LABEL_THRESHOLD = 65.0
+UNCERTAIN_SCORE_MIN = 55.0
+UNCERTAIN_SCORE_MAX = 70.0
+
 
 def _safe_ratio(matching_skills_count: int | None, required_skills_count: int | None) -> float:
     if required_skills_count is None or required_skills_count <= 0:
@@ -33,6 +37,10 @@ def _compute_success_score(
     score += -8 if had_rework else 10
 
     return round(max(0.0, min(100.0, score)), 2)
+
+
+def _compute_success_label(success_score: float) -> int:
+    return 1 if float(success_score) >= SUCCESS_LABEL_THRESHOLD else 0
 
 
 def build_training_dataset_rows(db: Session) -> list[dict[str, Any]]:
@@ -64,7 +72,7 @@ def build_training_dataset_rows(db: Session) -> list[dict[str, Any]]:
             )
         )
 
-        success_label = 1 if success_score >= 60 else 0
+        success_label = _compute_success_label(success_score)
 
         rows.append(
             {
@@ -101,26 +109,109 @@ def build_training_dataset_rows(db: Session) -> list[dict[str, Any]]:
     return rows
 
 
+def _analyze_row_quality(row: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+
+    success_score = float(row.get("success_score") or 0)
+    required_skills_count = int(row.get("required_skills_count") or 0)
+    matching_ratio = float(row.get("matching_ratio") or 0)
+    complexity_snapshot = int(row.get("complexity_snapshot") or 0)
+    recommendation_score = float(row.get("recommendation_score") or 0)
+    skill_match_score = float(row.get("skill_match_score") or 0)
+    source = (row.get("source") or "").strip().lower()
+
+    if required_skills_count <= 0:
+        reasons.append("no_required_skills")
+
+    if not (0.0 <= matching_ratio <= 1.0):
+        reasons.append("invalid_matching_ratio")
+
+    if not (1 <= complexity_snapshot <= 5):
+        reasons.append("invalid_complexity")
+
+    if UNCERTAIN_SCORE_MIN <= success_score <= UNCERTAIN_SCORE_MAX:
+        reasons.append("uncertain_success_band")
+
+    if (
+        source == "historical_backfill"
+        and recommendation_score <= 0
+        and skill_match_score <= 0
+        and matching_ratio == 0
+    ):
+        reasons.append("weak_backfill_signal")
+
+    return reasons
+
+
+def build_clean_training_dataset_rows(db: Session) -> dict[str, Any]:
+    raw_rows = build_training_dataset_rows(db)
+
+    clean_rows: list[dict[str, Any]] = []
+    excluded_rows: list[dict[str, Any]] = []
+    excluded_by_reason: dict[str, int] = {}
+
+    for row in raw_rows:
+        reasons = _analyze_row_quality(row)
+
+        if reasons:
+            excluded_rows.append(
+                {
+                    "assignment_decision_id": row["assignment_decision_id"],
+                    "task_id": row["task_id"],
+                    "reasons": reasons,
+                }
+            )
+            for reason in reasons:
+                excluded_by_reason[reason] = excluded_by_reason.get(reason, 0) + 1
+        else:
+            clean_rows.append(row)
+
+    return {
+        "raw_rows": raw_rows,
+        "clean_rows": clean_rows,
+        "excluded_rows": excluded_rows,
+        "excluded_by_reason": excluded_by_reason,
+    }
+
+
+def _distribution(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    result: dict[str, int] = {}
+
+    for row in rows:
+        value = row.get(field)
+        label = str(value) if value not in (None, "") else "NO_DEFINIDO"
+        result[label] = result.get(label, 0) + 1
+
+    return result
+
+
 def build_training_dataset_preview(db: Session, limit: int = 20) -> dict[str, Any]:
     rows = build_training_dataset_rows(db)
 
-    source_counts: dict[str, int] = {}
-    strategy_counts: dict[str, int] = {}
-    label_counts = {"0": 0, "1": 0}
-
-    for row in rows:
-        source = row["source"] or "NO_DEFINIDO"
-        strategy = row["strategy"] or "NO_DEFINIDO"
-        label = str(row["success_label"])
-
-        source_counts[source] = source_counts.get(source, 0) + 1
-        strategy_counts[strategy] = strategy_counts.get(strategy, 0) + 1
-        label_counts[label] = label_counts.get(label, 0) + 1
-
     return {
         "total_rows": len(rows),
-        "label_distribution": label_counts,
-        "source_distribution": source_counts,
-        "strategy_distribution": strategy_counts,
+        "label_distribution": _distribution(rows, "success_label"),
+        "source_distribution": _distribution(rows, "source"),
+        "strategy_distribution": _distribution(rows, "strategy"),
         "sample_rows": rows[:limit],
+    }
+
+
+def build_clean_training_dataset_preview(db: Session, limit: int = 20) -> dict[str, Any]:
+    dataset = build_clean_training_dataset_rows(db)
+    raw_rows = dataset["raw_rows"]
+    clean_rows = dataset["clean_rows"]
+    excluded_rows = dataset["excluded_rows"]
+    excluded_by_reason = dataset["excluded_by_reason"]
+
+    return {
+        "raw_total_rows": len(raw_rows),
+        "clean_total_rows": len(clean_rows),
+        "excluded_rows": len(excluded_rows),
+        "excluded_by_reason": excluded_by_reason,
+        "label_distribution": _distribution(clean_rows, "success_label"),
+        "source_distribution": _distribution(clean_rows, "source"),
+        "strategy_distribution": _distribution(clean_rows, "strategy"),
+        "sample_rows": clean_rows[:limit],
+        "sample_excluded_rows": excluded_rows[:limit],
     }

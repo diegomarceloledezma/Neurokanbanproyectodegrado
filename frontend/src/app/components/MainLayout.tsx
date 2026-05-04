@@ -1,148 +1,130 @@
 import { Outlet, NavLink, useNavigate } from "react-router";
 import {
   LayoutDashboard,
-  FolderKanban,
-  CheckSquare,
+  FolderOpen,
+  KanbanSquare,
   Users,
   BarChart3,
   History,
-  Bell,
+  BrainCircuit,
   LogOut,
 } from "lucide-react";
-import { useMemo } from "react";
-import { clearSession, getStoredUser } from "../services/sessionService";
+import { getCurrentUser, clearSession } from "../services/sessionService";
+
+const roleLabels: Record<string, string> = {
+  admin: "Administrador",
+  leader: "Líder de equipo",
+  member: "Integrante del equipo",
+};
 
 export default function MainLayout() {
   const navigate = useNavigate();
-  const currentUser = getStoredUser();
+  const currentUser = getCurrentUser();
 
-  const menuItems = useMemo(
-    () => [
-      { name: "Panel principal", path: "/", icon: LayoutDashboard, disabled: false },
-      { name: "Proyectos", path: "/projects", icon: FolderKanban, disabled: false },
-      { name: "Tablero Kanban", path: "/kanban", icon: CheckSquare, disabled: false },
-      { name: "Equipo", path: "/team", icon: Users, disabled: false },
-      { name: "Métricas", path: "/metrics", icon: BarChart3, disabled: false },
-      { name: "Historial de decisiones", path: "/history", icon: History, disabled: false },
-    ],
-    []
-  );
-
-  const displayName = currentUser?.full_name ?? "Usuario";
-
-  const roleLabels: Record<string, string> = {
-    leader: "Líder de equipo",
-    member: "Integrante del equipo",
-    admin: "Administrador",
-  };
-
-  const rawRole =
-    currentUser?.global_role?.name ??
-    currentUser?.role_name ??
-    null;
-
-  const displayRole = rawRole
-    ? roleLabels[rawRole] ?? rawRole
+  const displayRole = currentUser?.role_name
+    ? roleLabels[currentUser.role_name] ?? currentUser.role_name
+    : currentUser?.global_role?.name
+    ? roleLabels[currentUser.global_role.name] ?? currentUser.global_role.name
     : "Sin rol";
 
-  const initials = displayName
-    .split(" ")
-    .map((name) => name[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-
   const handleLogout = () => {
-    const confirmed = window.confirm("¿Estás seguro de que deseas cerrar sesión?");
-
-    if (!confirmed) return;
-
     clearSession();
     navigate("/login");
   };
 
+  const menuItems = [
+    {
+      to: "/",
+      label: "Panel principal",
+      icon: LayoutDashboard,
+      end: true,
+    },
+    {
+      to: "/projects",
+      label: "Proyectos",
+      icon: FolderOpen,
+    },
+    {
+      to: "/metrics",
+      label: "Métricas",
+      icon: BarChart3,
+    },
+    {
+      to: "/history",
+      label: "Historial de decisiones",
+      icon: History,
+    },
+    {
+      to: "/modelo-ia",
+      label: "Modelo IA",
+      icon: BrainCircuit,
+    },
+  ];
+
   return (
-    <div className="nk-layout flex h-screen bg-slate-950">
-      <aside className="nk-sidebar w-64 bg-slate-900 border-r border-slate-800 flex flex-col">
-        <div className="nk-sidebar__logo-wrapper p-6 border-b border-slate-800">
-          <img
-            src={new URL("../../assets/1ef90e5cd9e0c309c8c60ba91e7c99fbee854655.png", import.meta.url).href}
-            alt="NeuroKanban"
-            className="nk-logo h-10"
-          />
+    <div className="min-h-screen bg-[#020617] text-white flex">
+      <aside className="w-64 bg-[#081225] border-r border-slate-800 flex flex-col">
+        <div className="px-6 py-6 border-b border-slate-800">
+          <h1 className="text-2xl font-bold text-white">NeuroKanban</h1>
         </div>
 
-        <nav className="nk-sidebar__nav flex-1 p-4 space-y-1">
-          {menuItems.map((item) =>
-            item.disabled ? (
-              <button
-                key={item.name}
-                type="button"
-                disabled
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-600 cursor-not-allowed"
-              >
-                <item.icon className="nk-nav-item__icon w-5 h-5" />
-                <span className="nk-nav-item__text">{item.name}</span>
-              </button>
-            ) : (
+        <nav className="flex-1 px-4 py-6 space-y-2">
+          {menuItems.map((item) => {
+            const Icon = item.icon;
+
+            return (
               <NavLink
-                key={item.path}
-                to={item.path}
-                end={item.path === "/"}
+                key={item.to}
+                to={item.to}
+                end={item.end}
                 className={({ isActive }) =>
-                  `nk-nav-item flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                  `flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
                     isActive
-                      ? "nk-nav-item--active bg-gradient-to-r from-cyan-500/10 to-purple-500/10 text-cyan-400 border border-cyan-500/20"
-                      : "nk-nav-item--inactive text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                      ? "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"
+                      : "text-slate-300 hover:bg-slate-800/60"
                   }`
                 }
               >
-                <item.icon className="nk-nav-item__icon w-5 h-5" />
-                <span className="nk-nav-item__text">{item.name}</span>
+                <Icon className="w-5 h-5" />
+                <span>{item.label}</span>
               </NavLink>
-            )
-          )}
+            );
+          })}
         </nav>
 
-        <div className="nk-sidebar__footer p-4 border-t border-slate-800">
+        <div className="px-4 pb-4">
+          <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 mb-3">
+            <p className="text-white font-semibold">
+              {currentUser?.full_name || currentUser?.username || "Usuario"}
+            </p>
+            <p className="text-slate-400 text-sm">{displayRole}</p>
+          </div>
+
           <button
             onClick={handleLogout}
-            className="nk-logout-button flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-red-400 hover:bg-slate-800/50 w-full transition-all"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 transition-all text-slate-200"
           >
-            <LogOut className="nk-logout-button__icon w-5 h-5" />
-            <span className="nk-logout-button__text">Cerrar sesión</span>
+            <LogOut className="w-4 h-4" />
+            Cerrar sesión
           </button>
         </div>
       </aside>
 
-      <div className="nk-main flex-1 flex flex-col overflow-hidden">
-        <header className="nk-header h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-6">
-          <div className="nk-header__welcome text-slate-400 text-sm">
-            Hola, <span className="nk-header__username text-slate-200">{displayName}</span>
+      <main className="flex-1">
+        <header className="border-b border-slate-800 px-8 py-5 bg-[#081225]">
+          <p className="text-slate-300 text-lg">
+            Hola,{" "}
+            <span className="text-white font-semibold">
+              {currentUser?.full_name || currentUser?.username || "Usuario"}
+            </span>
             <span className="text-slate-500"> · {displayRole}</span>
-          </div>
-
-          <div className="nk-header__actions flex items-center gap-4">
-            <button
-              aria-label="Notificaciones"
-              className="nk-notification-button relative p-2 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-all"
-            >
-              <Bell className="nk-notification-button__icon w-5 h-5" />
-              <span className="nk-notification-badge absolute top-1 right-1 w-2 h-2 bg-cyan-500 rounded-full"></span>
-            </button>
-
-            <div className="nk-user-avatar-wrapper flex items-center gap-3">
-              <div className="nk-user-avatar w-9 h-9 rounded-full bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center text-white text-sm">
-                {initials}
-              </div>
-            </div>
-          </div>
+          </p>
         </header>
 
-        <main className="nk-content flex-1 overflow-auto bg-slate-950 p-6">
+        <section className="p-8">
           <Outlet />
-        </main>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }

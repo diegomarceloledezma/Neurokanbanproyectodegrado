@@ -190,6 +190,22 @@ def assign_task(task_id: int, payload: TaskAssignRequest, db: Session = Depends(
             detail="No se pudo construir el snapshot de asignación para el integrante seleccionado",
         )
 
+    snapshot = snapshot or {}
+
+    required_skills_count = snapshot.get("required_skills_count")
+    matching_skills_count = snapshot.get("matching_skills_count")
+    matching_ratio = snapshot.get("matching_ratio")
+
+    if matching_ratio is None:
+        if (
+            required_skills_count is not None
+            and required_skills_count > 0
+            and matching_skills_count is not None
+        ):
+            matching_ratio = round(matching_skills_count / required_skills_count, 4)
+        else:
+            matching_ratio = None
+
     task.assigned_to = payload.assigned_to
 
     history = TaskAssignmentHistory(
@@ -201,24 +217,24 @@ def assign_task(task_id: int, payload: TaskAssignRequest, db: Session = Depends(
         recommendation_score=(
             payload.recommendation_score
             if payload.recommendation_score is not None
-            else snapshot["recommendation_score"]
+            else snapshot.get("recommendation_score")
         ),
-        risk_level=payload.risk_level or snapshot["risk_level"],
+        risk_level=payload.risk_level or snapshot.get("risk_level"),
         reason=payload.reason,
         recommendation_used=payload.recommendation_used,
-        workload_score=snapshot["workload_score"],
-        skill_match_score=snapshot["skill_match_score"],
-        availability_score=snapshot["availability_score"],
-        performance_score=snapshot["performance_score"],
-        current_load_snapshot=snapshot["current_load_snapshot"],
-        availability_snapshot=snapshot["availability_snapshot"],
-        active_tasks_snapshot=snapshot["active_tasks_snapshot"],
-        required_skills_count=snapshot["required_skills_count"],
-        matching_skills_count=snapshot["matching_skills_count"],
-        matching_ratio=snapshot["matching_ratio"],
-        estimated_hours_snapshot=snapshot["estimated_hours_snapshot"],
-        priority_snapshot=snapshot["priority_snapshot"],
-        complexity_snapshot=snapshot["complexity_snapshot"],
+        workload_score=snapshot.get("workload_score"),
+        skill_match_score=snapshot.get("skill_match_score"),
+        availability_score=snapshot.get("availability_score"),
+        performance_score=snapshot.get("performance_score"),
+        current_load_snapshot=snapshot.get("current_load_snapshot"),
+        availability_snapshot=snapshot.get("availability_snapshot"),
+        active_tasks_snapshot=snapshot.get("active_tasks_snapshot"),
+        required_skills_count=required_skills_count,
+        matching_skills_count=matching_skills_count,
+        matching_ratio=matching_ratio,
+        estimated_hours_snapshot=snapshot.get("estimated_hours_snapshot"),
+        priority_snapshot=snapshot.get("priority_snapshot"),
+        complexity_snapshot=snapshot.get("complexity_snapshot"),
     )
 
     db.add(history)

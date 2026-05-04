@@ -1,50 +1,35 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.services.ml_baseline_service import (
-    get_model_status,
-    preview_predictions,
-    train_baseline_model,
+    get_baseline_status,
+    train_baseline_model_from_rows,
 )
+from app.services.training_dataset_service import build_training_dataset_rows
 
-router = APIRouter(prefix="/ml/baseline", tags=["ML Baseline"])
+router = APIRouter(prefix="/ml-baseline", tags=["ML Baseline"])
 
 
 @router.get("/status")
 def baseline_status():
-    return get_model_status()
+    return get_baseline_status()
 
 
-@router.post("/train")
-def train_baseline(
-    project_id: int | None = Query(default=None),
-    test_size: float = Query(default=0.25, ge=0.1, le=0.4),
-    random_state: int = Query(default=42),
-    db: Session = Depends(get_db),
-):
-    try:
-        return train_baseline_model(
-            db,
-            project_id=project_id,
-            test_size=test_size,
-            random_state=random_state,
+@router.post("/train-from-history")
+def train_baseline_from_history(db: Session = Depends(get_db)):
+    rows = build_training_dataset_rows(db)
+
+    if len(rows) < 30:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay suficientes registros históricos con outcome para entrenar el baseline.",
         )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-
-@router.get("/preview")
-def preview_baseline_predictions(
-    project_id: int | None = Query(default=None),
-    limit: int = Query(default=20, ge=5, le=100),
-    db: Session = Depends(get_db),
-):
-    try:
-        return preview_predictions(
-            db,
-            project_id=project_id,
-            limit=limit,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = train_baseline_model_from_rows(
+        rows=rows,
+        project_id=None,
+        project_name="NeuroKanban - entrenamiento desde histórico interno",
+        source_name="historical_internal_data",
+    )
+    return result

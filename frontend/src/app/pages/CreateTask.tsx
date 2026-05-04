@@ -7,10 +7,16 @@ import {
   CheckSquare,
   FolderKanban,
   Plus,
+  Search,
   User,
 } from "lucide-react";
 import { createTask } from "../services/taskService";
-import { getProjectById, getProjectMembers, type ProjectMember, type ProjectResponse } from "../services/projectService";
+import {
+  getProjectById,
+  getProjectMembers,
+  type ProjectMember,
+  type ProjectResponse,
+} from "../services/projectService";
 import { getSkills, type SkillResponse } from "../services/skillService";
 import { getAccessToken, getStoredUser } from "../services/sessionService";
 
@@ -38,6 +44,13 @@ type SelectedRequiredSkill = {
   required_level: number;
 };
 
+const sourceLabels: Record<string, string> = {
+  ESCO: "ESCO",
+  "O*NET": "O*NET",
+  SFIA: "SFIA",
+  PROJECT_CURATED: "Curado del proyecto",
+};
+
 export default function CreateTask() {
   const { projectId } = useParams();
   const navigate = useNavigate();
@@ -58,6 +71,9 @@ export default function CreateTask() {
   const [dueDate, setDueDate] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<SelectedRequiredSkill[]>([]);
+
+  const [skillSearch, setSkillSearch] = useState("");
+  const [skillCategoryFilter, setSkillCategoryFilter] = useState("");
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -108,6 +124,59 @@ export default function CreateTask() {
   const sortedSkills = useMemo(() => {
     return [...skillsCatalog].sort((a, b) => a.name.localeCompare(b.name));
   }, [skillsCatalog]);
+
+  const categoryOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        sortedSkills
+          .map((skill) => skill.category?.trim())
+          .filter((category): category is string => Boolean(category))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [sortedSkills]);
+
+  const filteredSkills = useMemo(() => {
+    return sortedSkills.filter((skill) => {
+      const matchesCategory = skillCategoryFilter
+        ? (skill.category || "").toLowerCase() === skillCategoryFilter.toLowerCase()
+        : true;
+
+      const search = skillSearch.trim().toLowerCase();
+
+      const matchesSearch = search
+        ? skill.name.toLowerCase().includes(search) ||
+          (skill.canonical_name || "").toLowerCase().includes(search) ||
+          (skill.description || "").toLowerCase().includes(search) ||
+          (skill.category || "").toLowerCase().includes(search) ||
+          (skill.source_name || "").toLowerCase().includes(search)
+        : true;
+
+      return matchesCategory && matchesSearch;
+    });
+  }, [sortedSkills, skillCategoryFilter, skillSearch]);
+
+  const selectedSkillDetails = useMemo(() => {
+    return selectedSkills
+      .map((selected) => {
+        const skill = sortedSkills.find((item) => item.id === selected.skill_id);
+        return skill
+          ? {
+              ...selected,
+              name: skill.name,
+              category: skill.category,
+              source_name: skill.source_name,
+            }
+          : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a!.name || "").localeCompare(b!.name || "")) as Array<
+      SelectedRequiredSkill & {
+        name: string;
+        category?: string | null;
+        source_name?: string | null;
+      }
+    >;
+  }, [selectedSkills, sortedSkills]);
 
   const isSkillSelected = (skillId: number) => {
     return selectedSkills.some((item) => item.skill_id === skillId);
@@ -375,13 +444,61 @@ export default function CreateTask() {
               <h2 className="text-xl text-white">Habilidades requeridas</h2>
             </div>
 
-            {sortedSkills.length === 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Buscar habilidad</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={skillSearch}
+                    onChange={(e) => setSkillSearch(e.target.value)}
+                    placeholder="Ej: investigación, diseño, datos, marketing..."
+                    className="w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Filtrar por categoría</label>
+                <select
+                  value={skillCategoryFilter}
+                  onChange={(e) => setSkillCategoryFilter(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="">Todas las categorías</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {selectedSkillDetails.length > 0 && (
+              <div className="mb-5">
+                <p className="text-slate-300 text-sm mb-3">Habilidades seleccionadas</p>
+                <div className="flex flex-wrap gap-2">
+                  {selectedSkillDetails.map((skill) => (
+                    <span
+                      key={skill.skill_id}
+                      className="px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm"
+                    >
+                      {skill.name} · nivel {skill.required_level}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {filteredSkills.length === 0 ? (
               <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-slate-400 text-sm">
-                No hay habilidades registradas en el sistema.
+                No se encontraron habilidades con los filtros actuales.
               </div>
             ) : (
-              <div className="space-y-3">
-                {sortedSkills.map((skill) => {
+              <div className="space-y-3 max-h-[680px] overflow-y-auto pr-1">
+                {filteredSkills.map((skill) => {
                   const selected = selectedSkills.find((item) => item.skill_id === skill.id);
 
                   return (
@@ -394,7 +511,7 @@ export default function CreateTask() {
                       }`}
                     >
                       <div className="flex items-start justify-between gap-4 flex-wrap">
-                        <label className="inline-flex items-start gap-3 cursor-pointer">
+                        <label className="inline-flex items-start gap-3 cursor-pointer flex-1">
                           <input
                             type="checkbox"
                             checked={isSkillSelected(skill.id)}
@@ -403,9 +520,26 @@ export default function CreateTask() {
                           />
                           <div>
                             <p className="text-white">{skill.name}</p>
-                            <p className="text-slate-400 text-sm">
-                              {skill.category || "Sin categoría"}
-                            </p>
+
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {skill.category && (
+                                <span className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 text-xs">
+                                  {skill.category}
+                                </span>
+                              )}
+
+                              {skill.source_name && (
+                                <span className="px-2 py-1 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs">
+                                  {sourceLabels[skill.source_name] ?? skill.source_name}
+                                </span>
+                              )}
+                            </div>
+
+                            {skill.description && (
+                              <p className="text-slate-400 text-sm mt-3 leading-relaxed">
+                                {skill.description}
+                              </p>
+                            )}
                           </div>
                         </label>
 

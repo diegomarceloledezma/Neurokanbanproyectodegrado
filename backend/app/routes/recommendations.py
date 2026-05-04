@@ -14,7 +14,7 @@ from app.services.recommendation_engine import (
     build_task_simulation_response,
     load_task_or_none,
 )
-from app.services.task_insight_engine import infer_task_insights
+from app.services.task_insights_service import build_task_insight_response
 
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
@@ -27,9 +27,16 @@ def get_task_recommendations(
     db: Session = Depends(get_db),
 ):
     if strategy not in ALLOWED_STRATEGIES:
-        raise HTTPException(status_code=400, detail="Estrategia no válida")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estrategia inválida. Usa una de: {', '.join(sorted(ALLOWED_STRATEGIES))}",
+        )
+
     if mode not in ALLOWED_MODES:
-        raise HTTPException(status_code=400, detail="Modo no válido")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modo inválido. Usa uno de: {', '.join(sorted(ALLOWED_MODES))}",
+        )
 
     task = load_task_or_none(db, task_id)
     if not task:
@@ -37,7 +44,10 @@ def get_task_recommendations(
 
     response = build_task_recommendations_response(db, task, strategy, mode)
     if not response:
-        raise HTTPException(status_code=404, detail="No hay integrantes disponibles para recomendar")
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontraron integrantes elegibles para recomendar",
+        )
 
     return response
 
@@ -50,9 +60,16 @@ def get_task_simulation(
     db: Session = Depends(get_db),
 ):
     if strategy not in ALLOWED_STRATEGIES:
-        raise HTTPException(status_code=400, detail="Estrategia no válida")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Estrategia inválida. Usa una de: {', '.join(sorted(ALLOWED_STRATEGIES))}",
+        )
+
     if mode not in ALLOWED_MODES:
-        raise HTTPException(status_code=400, detail="Modo no válido")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Modo inválido. Usa uno de: {', '.join(sorted(ALLOWED_MODES))}",
+        )
 
     task = load_task_or_none(db, task_id)
     if not task:
@@ -60,30 +77,18 @@ def get_task_simulation(
 
     response = build_task_simulation_response(db, task, strategy, mode)
     if not response:
-        raise HTTPException(status_code=404, detail="No hay integrantes disponibles para simular")
+        raise HTTPException(
+            status_code=404,
+            detail="No se encontraron integrantes elegibles para simular",
+        )
 
     return response
 
 
 @router.get("/tasks/{task_id}/insights", response_model=TaskInsightResponse)
-def get_task_insights(
-    task_id: int,
-    db: Session = Depends(get_db),
-):
+def get_task_insights(task_id: int, db: Session = Depends(get_db)):
     task = load_task_or_none(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
-    insights = infer_task_insights(task)
-
-    return TaskInsightResponse(
-        task_id=task.id,
-        task_title=task.title,
-        suggested_strategy=insights["suggested_strategy"],
-        suggested_strategy_label=insights["suggested_strategy_label"],
-        suggested_area=insights["suggested_area"],
-        suggested_skills=insights["suggested_skills"],
-        confidence_level=insights["confidence_level"],
-        detected_signals=insights["detected_signals"],
-        explanation=insights["explanation"],
-    )
+    return build_task_insight_response(task)

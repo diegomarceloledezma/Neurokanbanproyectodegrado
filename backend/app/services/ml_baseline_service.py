@@ -24,7 +24,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Project, Task, TaskAssignmentHistory, TaskOutcome
 
-
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "ml_artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "baseline_success_model.joblib"
 METADATA_PATH = ARTIFACTS_DIR / "baseline_success_model_metadata.json"
@@ -231,9 +230,6 @@ def _extract_feature_importance(model: Pipeline) -> list[dict[str, float]]:
     return rows[:15]
 
 
-
-
-
 def build_feature_payload(
     *,
     source: str,
@@ -291,15 +287,15 @@ def predict_success_probability_from_features(
     return round(float(probability), 4)
 
 
-def train_baseline_model(
-    db: Session,
+def _train_pipeline_from_dataframe(
+    df: pd.DataFrame,
     *,
-    project_id: int | None = None,
+    project_id: int | None,
+    project_name: str | None,
+    source_name: str,
     test_size: float = 0.25,
     random_state: int = 42,
 ) -> dict[str, Any]:
-    df = fetch_training_dataframe(db, project_id=project_id)
-
     if df.empty:
         raise ValueError("No hay datos suficientes para entrenar el modelo baseline")
 
@@ -342,16 +338,12 @@ def train_baseline_model(
     _ensure_artifacts_dir()
     joblib.dump(pipeline, MODEL_PATH)
 
-    project_name = None
-    if project_id is not None:
-        project = db.query(Project).filter(Project.id == project_id).first()
-        project_name = project.name if project else None
-
     metadata = {
         "model_type": "LogisticRegression",
         "target": "success_label",
         "project_id": project_id,
         "project_name": project_name,
+        "training_source": source_name,
         "dataset_rows": int(len(df)),
         "train_rows": int(len(X_train)),
         "test_rows": int(len(X_test)),
@@ -378,6 +370,51 @@ def train_baseline_model(
     return metadata
 
 
+def train_baseline_model(
+    db: Session,
+    *,
+    project_id: int | None = None,
+    test_size: float = 0.25,
+    random_state: int = 42,
+) -> dict[str, Any]:
+    df = fetch_training_dataframe(db, project_id=project_id)
+
+    project_name = None
+    if project_id is not None:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        project_name = project.name if project else None
+
+    return _train_pipeline_from_dataframe(
+        df=df,
+        project_id=project_id,
+        project_name=project_name,
+        source_name="database_training_history",
+        test_size=test_size,
+        random_state=random_state,
+    )
+
+
+def train_baseline_model_from_rows(
+    *,
+    rows: list[dict[str, Any]],
+    project_id: int | None = None,
+    project_name: str | None = None,
+    source_name: str = "historical_internal_data",
+    test_size: float = 0.25,
+    random_state: int = 42,
+) -> dict[str, Any]:
+    df = pd.DataFrame(rows)
+
+    return _train_pipeline_from_dataframe(
+        df=df,
+        project_id=project_id,
+        project_name=project_name,
+        source_name=source_name,
+        test_size=test_size,
+        random_state=random_state,
+    )
+
+
 def load_baseline_model() -> Pipeline | None:
     if not MODEL_PATH.exists():
         return None
@@ -399,6 +436,10 @@ def get_model_status() -> dict[str, Any]:
         "metadata_path": str(METADATA_PATH),
         "metadata": metadata,
     }
+
+
+def get_baseline_status() -> dict[str, Any]:
+    return get_model_status()
 
 
 def preview_predictions(

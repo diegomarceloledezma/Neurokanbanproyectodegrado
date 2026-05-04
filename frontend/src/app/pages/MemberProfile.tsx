@@ -10,6 +10,7 @@ import {
   Plus,
   Pencil,
   Trash2,
+  Search,
 } from "lucide-react";
 import {
   addMemberSkill,
@@ -52,6 +53,13 @@ const levelLabels: Record<number, string> = {
   5: "Experto",
 };
 
+const sourceLabels: Record<string, string> = {
+  ESCO: "ESCO",
+  "O*NET": "O*NET",
+  SFIA: "SFIA",
+  PROJECT_CURATED: "Curado del proyecto",
+};
+
 export default function MemberProfile() {
   const { memberId } = useParams();
   const navigate = useNavigate();
@@ -70,6 +78,11 @@ export default function MemberProfile() {
   const [submitting, setSubmitting] = useState(false);
   const [editingSkillId, setEditingSkillId] = useState<number | null>(null);
   const [deletingSkillId, setDeletingSkillId] = useState<number | null>(null);
+
+  const [skillSearch, setSkillSearch] = useState("");
+  const [skillCategoryFilter, setSkillCategoryFilter] = useState("");
+  const [memberSkillSearch, setMemberSkillSearch] = useState("");
+  const [memberSkillCategoryFilter, setMemberSkillCategoryFilter] = useState("");
 
   const token = getAccessToken();
 
@@ -129,6 +142,65 @@ export default function MemberProfile() {
     setVerifiedByLeader(false);
     setEditingSkillId(null);
   };
+
+  const allCategories = useMemo(() => {
+    return Array.from(
+      new Set(
+        allSkills
+          .map((skill) => skill.category?.trim())
+          .filter((category): category is string => Boolean(category))
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [allSkills]);
+
+  const filteredCatalogSkills = useMemo(() => {
+    return [...allSkills]
+      .filter((skill) => {
+        const matchesCategory = skillCategoryFilter
+          ? (skill.category || "").toLowerCase() === skillCategoryFilter.toLowerCase()
+          : true;
+
+        const search = skillSearch.trim().toLowerCase();
+
+        const matchesSearch = search
+          ? skill.name.toLowerCase().includes(search) ||
+            (skill.canonical_name || "").toLowerCase().includes(search) ||
+            (skill.description || "").toLowerCase().includes(search) ||
+            (skill.category || "").toLowerCase().includes(search) ||
+            (skill.source_name || "").toLowerCase().includes(search)
+          : true;
+
+        return matchesCategory && matchesSearch;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [allSkills, skillCategoryFilter, skillSearch]);
+
+  const filteredMemberSkills = useMemo(() => {
+    return [...memberSkills]
+      .filter((skill) => {
+        const matchesCategory = memberSkillCategoryFilter
+          ? (skill.category || "").toLowerCase() === memberSkillCategoryFilter.toLowerCase()
+          : true;
+
+        const search = memberSkillSearch.trim().toLowerCase();
+
+        const catalogInfo = allSkills.find((item) => item.id === skill.skill_id);
+
+        const matchesSearch = search
+          ? skill.skill_name.toLowerCase().includes(search) ||
+            (skill.category || "").toLowerCase().includes(search) ||
+            (catalogInfo?.source_name || "").toLowerCase().includes(search)
+          : true;
+
+        return matchesCategory && matchesSearch;
+      })
+      .sort((a, b) => a.skill_name.localeCompare(b.skill_name));
+  }, [memberSkills, memberSkillCategoryFilter, memberSkillSearch, allSkills]);
+
+  const selectedCatalogSkill = useMemo(() => {
+    if (!selectedSkillId) return null;
+    return allSkills.find((skill) => String(skill.id) === selectedSkillId) ?? null;
+  }, [allSkills, selectedSkillId]);
 
   const handleSubmitSkill = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -209,10 +281,6 @@ export default function MemberProfile() {
       setDeletingSkillId(null);
     }
   };
-
-  const sortedMemberSkills = useMemo(() => {
-    return [...memberSkills].sort((a, b) => a.skill_name.localeCompare(b.skill_name));
-  }, [memberSkills]);
 
   if (loading) {
     return <div className="text-slate-300">Cargando perfil del integrante...</div>;
@@ -424,6 +492,38 @@ export default function MemberProfile() {
               <h2 className="text-xl text-white">Gestión de habilidades</h2>
             </div>
 
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Buscar habilidad del catálogo</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={skillSearch}
+                    onChange={(e) => setSkillSearch(e.target.value)}
+                    placeholder="Ej: programación, UX, investigación..."
+                    className="w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Filtrar catálogo por categoría</label>
+                <select
+                  value={skillCategoryFilter}
+                  onChange={(e) => setSkillCategoryFilter(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="">Todas las categorías</option>
+                  {allCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <form onSubmit={handleSubmitSkill} className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
               <div className="md:col-span-2">
                 <label className="block text-slate-300 text-sm mb-2">Habilidad</label>
@@ -434,13 +534,36 @@ export default function MemberProfile() {
                   required
                 >
                   <option value="">Selecciona una habilidad</option>
-                  {allSkills.map((skill) => (
+                  {filteredCatalogSkills.map((skill) => (
                     <option key={skill.id} value={skill.id}>
-                      {skill.name} {skill.category ? `— ${skill.category}` : ""}
+                      {skill.name}
+                      {skill.category ? ` — ${skill.category}` : ""}
+                      {skill.source_name ? ` — ${sourceLabels[skill.source_name] ?? skill.source_name}` : ""}
                     </option>
                   ))}
                 </select>
               </div>
+
+              {selectedCatalogSkill && (
+                <div className="md:col-span-2 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+                  <p className="text-white">{selectedCatalogSkill.name}</p>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {selectedCatalogSkill.category && (
+                      <span className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300 text-xs">
+                        {selectedCatalogSkill.category}
+                      </span>
+                    )}
+                    {selectedCatalogSkill.source_name && (
+                      <span className="px-2 py-1 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs">
+                        {sourceLabels[selectedCatalogSkill.source_name] ?? selectedCatalogSkill.source_name}
+                      </span>
+                    )}
+                  </div>
+                  {selectedCatalogSkill.description && (
+                    <p className="text-slate-400 text-sm mt-3">{selectedCatalogSkill.description}</p>
+                  )}
+                </div>
+              )}
 
               <div>
                 <label className="block text-slate-300 text-sm mb-2">Nivel</label>
@@ -507,57 +630,107 @@ export default function MemberProfile() {
               </div>
             </form>
 
-            {sortedMemberSkills.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Buscar entre habilidades registradas</label>
+                <div className="relative">
+                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={memberSkillSearch}
+                    onChange={(e) => setMemberSkillSearch(e.target.value)}
+                    placeholder="Ej: datos, backend, redacción..."
+                    className="w-full pl-10 pr-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Filtrar registradas por categoría</label>
+                <select
+                  value={memberSkillCategoryFilter}
+                  onChange={(e) => setMemberSkillCategoryFilter(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
+                >
+                  <option value="">Todas las categorías</option>
+                  {allCategories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {filteredMemberSkills.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {sortedMemberSkills.map((skill) => (
-                  <div
-                    key={skill.id}
-                    className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-white">{skill.skill_name}</p>
-                        <p className="text-slate-400 text-sm">{skill.category || "Sin categoría"}</p>
+                {filteredMemberSkills.map((skill) => {
+                  const catalogInfo = allSkills.find((item) => item.id === skill.skill_id);
+
+                  return (
+                    <div
+                      key={skill.id}
+                      className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-white">{skill.skill_name}</p>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            <span className="text-slate-400 text-sm">
+                              {skill.category || "Sin categoría"}
+                            </span>
+
+                            {catalogInfo?.source_name && (
+                              <span className="px-2 py-1 rounded bg-purple-500/10 border border-purple-500/20 text-purple-300 text-xs">
+                                {sourceLabels[catalogInfo.source_name] ?? catalogInfo.source_name}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-xs px-2 py-1 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
+                          Nivel {skill.level}
+                        </span>
                       </div>
-                      <span className="text-xs px-2 py-1 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
-                        Nivel {skill.level}
-                      </span>
-                    </div>
 
-                    <div className="mt-3 flex items-center justify-between text-sm text-slate-400 flex-wrap gap-2">
-                      <span>{levelLabels[skill.level] ?? "No definido"}</span>
-                      <span>{skill.years_experience} años</span>
-                      <span className={skill.verified_by_leader ? "text-green-400" : "text-yellow-400"}>
-                        {skill.verified_by_leader ? "Verificada" : "Pendiente"}
-                      </span>
-                    </div>
+                      <div className="mt-3 flex items-center justify-between text-sm text-slate-400 flex-wrap gap-2">
+                        <span>{levelLabels[skill.level] ?? "No definido"}</span>
+                        <span>{skill.years_experience} años</span>
+                        <span className={skill.verified_by_leader ? "text-green-400" : "text-yellow-400"}>
+                          {skill.verified_by_leader ? "Verificada" : "Pendiente"}
+                        </span>
+                      </div>
 
-                    <div className="mt-4 flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleEditSkill(skill)}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-all"
-                      >
-                        <Pencil className="w-4 h-4" />
-                        Editar
-                      </button>
+                      {catalogInfo?.description && (
+                        <p className="text-slate-500 text-sm mt-3">{catalogInfo.description}</p>
+                      )}
 
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSkill(skill)}
-                        disabled={deletingSkillId === skill.id}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-all disabled:opacity-60"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        {deletingSkillId === skill.id ? "Eliminando..." : "Eliminar"}
-                      </button>
+                      <div className="mt-4 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleEditSkill(skill)}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-all"
+                        >
+                          <Pencil className="w-4 h-4" />
+                          Editar
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSkill(skill)}
+                          disabled={deletingSkillId === skill.id}
+                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20 transition-all disabled:opacity-60"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          {deletingSkillId === skill.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="flex items-center justify-center p-8 bg-slate-800/30 rounded-lg">
-                <p className="text-slate-500">No hay habilidades registradas todavía</p>
+                <p className="text-slate-500">No hay habilidades registradas con los filtros actuales</p>
               </div>
             )}
           </div>

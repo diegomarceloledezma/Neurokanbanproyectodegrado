@@ -33,10 +33,61 @@ class SkillBase(BaseModel):
     id: int
     name: str
     category: Optional[str] = None
+    area_id: Optional[int] = None
     description: Optional[str] = None
+    canonical_name: Optional[str] = None
+    source_name: Optional[str] = None
+    source_code: Optional[str] = None
+    source_version: Optional[str] = None
+    source_url: Optional[str] = None
+    is_active: bool = True
     area: Optional[AreaBase] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SkillResponse(BaseModel):
+    id: int
+    name: str
+    category: Optional[str] = None
+    area_id: Optional[int] = None
+    description: Optional[str] = None
+    canonical_name: Optional[str] = None
+    source_name: Optional[str] = None
+    source_code: Optional[str] = None
+    source_version: Optional[str] = None
+    source_url: Optional[str] = None
+    is_active: bool = True
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SkillCatalogSeedResponse(BaseModel):
+    message: str
+    created: int
+    updated: int
+    total_seed_items: int
+
+
+class SkillAliasResponse(BaseModel):
+    id: int
+    skill_id: int
+    skill_name: str
+    alias_name: str
+    normalized_alias: str
+    source_name: Optional[str] = None
+    source_note: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SkillAliasSeedResponse(BaseModel):
+    message: str
+    created: int
+    updated: int
+    skipped: int
+    total_seed_items: int
 
 
 class UserSkillResponse(BaseModel):
@@ -107,6 +158,47 @@ class ProjectBase(BaseModel):
     team: Optional[TeamBase] = None
     creator: Optional[UserBase] = None
     members: list[ProjectMemberBase] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectCreate(BaseModel):
+    team_id: int
+    area_id: Optional[int] = None
+    name: str
+    description: Optional[str] = None
+    status: str = "active"
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    created_by: Optional[int] = None
+
+
+class AvailableUserItem(BaseModel):
+    id: int
+    full_name: str
+    username: str
+    email: str
+    role_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectMemberCreateRequest(BaseModel):
+    user_id: int
+    project_role: str
+    weekly_capacity_hours: Optional[float] = None
+    availability_percentage: Optional[float] = None
+
+
+class ProjectMemberResponse(BaseModel):
+    id: int
+    project_id: int
+    user_id: int
+    project_role: str
+    weekly_capacity_hours: Optional[float] = None
+    availability_percentage: Optional[float] = None
+    joined_at: datetime
+    user: UserBase
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -427,47 +519,6 @@ class TrainingDatasetRow(BaseModel):
     had_rework: Optional[bool] = None
     success_score: float
     success_label: int
-
-
-class AvailableUserItem(BaseModel):
-    id: int
-    full_name: str
-    username: str
-    email: str
-    role_name: Optional[str] = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ProjectMemberCreateRequest(BaseModel):
-    user_id: int
-    project_role: str
-    weekly_capacity_hours: Optional[float] = None
-    availability_percentage: Optional[float] = None
-
-
-class ProjectMemberResponse(BaseModel):
-    id: int
-    project_id: int
-    user_id: int
-    project_role: str
-    weekly_capacity_hours: Optional[float] = None
-    availability_percentage: Optional[float] = None
-    joined_at: datetime
-    user: UserBase
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class ProjectCreate(BaseModel):
-    team_id: int
-    area_id: Optional[int] = None
-    name: str
-    description: Optional[str] = None
-    status: str = "active"
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
-    created_by: Optional[int] = None
 
 
 class DashboardProjectItem(BaseModel):

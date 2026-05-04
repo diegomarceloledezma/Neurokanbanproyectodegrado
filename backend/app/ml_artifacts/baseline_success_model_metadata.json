@@ -1,23 +1,24 @@
 {
   "model_type": "LogisticRegression",
   "target": "success_label",
-  "project_id": 11,
-  "project_name": "NeuroKanban MVP - Dataset sintético IA 20260416_154907",
-  "dataset_rows": 200,
-  "train_rows": 150,
-  "test_rows": 50,
+  "project_id": null,
+  "project_name": "NeuroKanban - entrenamiento desde histórico interno",
+  "training_source": "historical_internal_data",
+  "dataset_rows": 300,
+  "train_rows": 225,
+  "test_rows": 75,
   "label_distribution": {
-    "1": 107,
-    "0": 93
+    "0": 202,
+    "1": 98
   },
   "test_size": 0.25,
   "random_state": 42,
   "metrics": {
-    "accuracy": 0.68,
-    "precision": 0.7391,
-    "recall": 0.6296,
-    "f1": 0.68,
-    "roc_auc": 0.8019
+    "accuracy": 0.6667,
+    "precision": 0.4865,
+    "recall": 0.75,
+    "f1": 0.5902,
+    "roc_auc": 0.7508
   },
   "numeric_features": [
     "recommendation_score",
@@ -41,106 +42,106 @@
   ],
   "top_coefficients": [
     {
-      "feature": "cat__strategy_learning",
-      "coefficient": -0.692368,
-      "absolute_weight": 0.692368
-    },
-    {
-      "feature": "num__matching_skills_count",
-      "coefficient": 0.543501,
-      "absolute_weight": 0.543501
-    },
-    {
-      "feature": "cat__strategy_urgency",
-      "coefficient": 0.414856,
-      "absolute_weight": 0.414856
-    },
-    {
-      "feature": "num__active_tasks_snapshot",
-      "coefficient": -0.303857,
-      "absolute_weight": 0.303857
-    },
-    {
-      "feature": "cat__priority_snapshot_high",
-      "coefficient": -0.297379,
-      "absolute_weight": 0.297379
-    },
-    {
-      "feature": "cat__source_recommended",
-      "coefficient": 0.244295,
-      "absolute_weight": 0.244295
-    },
-    {
-      "feature": "cat__source_manual",
-      "coefficient": -0.241114,
-      "absolute_weight": 0.241114
-    },
-    {
-      "feature": "num__complexity_snapshot",
-      "coefficient": -0.20979,
-      "absolute_weight": 0.20979
-    },
-    {
-      "feature": "cat__priority_snapshot_medium",
-      "coefficient": 0.195933,
-      "absolute_weight": 0.195933
-    },
-    {
       "feature": "cat__strategy_efficiency",
-      "coefficient": 0.173688,
-      "absolute_weight": 0.173688
-    },
-    {
-      "feature": "cat__priority_snapshot_low",
-      "coefficient": 0.148425,
-      "absolute_weight": 0.148425
-    },
-    {
-      "feature": "num__estimated_hours_snapshot",
-      "coefficient": -0.100025,
-      "absolute_weight": 0.100025
-    },
-    {
-      "feature": "cat__strategy_balance",
-      "coefficient": 0.098236,
-      "absolute_weight": 0.098236
+      "coefficient": -0.80837,
+      "absolute_weight": 0.80837
     },
     {
       "feature": "num__required_skills_count",
-      "coefficient": -0.076605,
-      "absolute_weight": 0.076605
+      "coefficient": -0.620813,
+      "absolute_weight": 0.620813
+    },
+    {
+      "feature": "cat__strategy_balance",
+      "coefficient": 0.550592,
+      "absolute_weight": 0.550592
     },
     {
       "feature": "num__matching_ratio",
-      "coefficient": 0.063006,
-      "absolute_weight": 0.063006
+      "coefficient": -0.530207,
+      "absolute_weight": 0.530207
+    },
+    {
+      "feature": "num__matching_skills_count",
+      "coefficient": 0.340099,
+      "absolute_weight": 0.340099
+    },
+    {
+      "feature": "cat__priority_snapshot_low",
+      "coefficient": -0.316272,
+      "absolute_weight": 0.316272
+    },
+    {
+      "feature": "cat__strategy_urgency",
+      "coefficient": 0.172253,
+      "absolute_weight": 0.172253
+    },
+    {
+      "feature": "cat__priority_snapshot_medium",
+      "coefficient": 0.143279,
+      "absolute_weight": 0.143279
+    },
+    {
+      "feature": "cat__priority_snapshot_high",
+      "coefficient": 0.107966,
+      "absolute_weight": 0.107966
+    },
+    {
+      "feature": "num__performance_score",
+      "coefficient": 0.105983,
+      "absolute_weight": 0.105983
+    },
+    {
+      "feature": "cat__strategy_learning",
+      "coefficient": 0.084785,
+      "absolute_weight": 0.084785
+    },
+    {
+      "feature": "num__current_load_snapshot",
+      "coefficient": -0.074035,
+      "absolute_weight": 0.074035
+    },
+    {
+      "feature": "cat__priority_snapshot_critical",
+      "coefficient": 0.064287,
+      "absolute_weight": 0.064287
+    },
+    {
+      "feature": "num__estimated_hours_snapshot",
+      "coefficient": -0.054543,
+      "absolute_weight": 0.054543
+    },
+    {
+      "feature": "num__availability_score",
+      "coefficient": -0.052335,
+      "absolute_weight": 0.052335
     }
   ],
   "classification_report": {
     "0": {
-      "precision": 0.6296296296296297,
-      "recall": 0.7391304347826086,
-      "f1-score": 0.68,
-      "support": 23.0
+      "precision": 0.8421052631578947,
+      "recall": 0.6274509803921569,
+      "f1-score": 0.7191011235955056,
+      "support": 51.0
     },
     "1": {
-      "precision": 0.7391304347826086,
-      "recall": 0.6296296296296297,
-      "f1-score": 0.68,
-      "support": 27.0
+      "precision": 0.4864864864864865,
+      "recall": 0.75,
+      "f1-score": 0.5901639344262295,
+      "support": 24.0
     },
-    "accuracy": 0.68,
+    "accuracy": 0.6666666666666666,
     "macro avg": {
-      "precision": 0.6843800322061191,
-      "recall": 0.6843800322061191,
-      "f1-score": 0.68,
-      "support": 50.0
+      "precision": 0.6642958748221905,
+      "recall": 0.6887254901960784,
+      "f1-score": 0.6546325290108675,
+      "support": 75.0
     },
     "weighted avg": {
-      "precision": 0.6887600644122384,
-      "recall": 0.68,
-      "f1-score": 0.68,
-      "support": 50.0
+      "precision": 0.7283072546230441,
+      "recall": 0.6666666666666666,
+      "f1-score": 0.6778412230613372,
+      "support": 75.0
     }
   }
 }

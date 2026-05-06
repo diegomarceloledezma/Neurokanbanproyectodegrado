@@ -14,7 +14,9 @@ import {
 import { getAccessToken } from "../services/sessionService";
 
 export default function Project() {
-  const { projectId } = useParams();
+  const { id, projectId } = useParams();
+  const resolvedProjectId = id ?? projectId ?? "";
+
   const navigate = useNavigate();
 
   const [project, setProject] = useState<ProjectResponse | null>(null);
@@ -38,7 +40,7 @@ export default function Project() {
       return;
     }
 
-    if (!projectId) {
+    if (!resolvedProjectId) {
       navigate("/projects", { replace: true });
       return;
     }
@@ -49,9 +51,9 @@ export default function Project() {
         setError("");
 
         const [projectData, membersData, availableUsersData] = await Promise.all([
-          getProjectById(projectId, token),
-          getProjectMembers(projectId, token),
-          getAvailableUsersForProject(projectId, token),
+          getProjectById(resolvedProjectId, token),
+          getProjectMembers(resolvedProjectId, token),
+          getAvailableUsersForProject(resolvedProjectId, token),
         ]);
 
         setProject(projectData);
@@ -66,7 +68,7 @@ export default function Project() {
     };
 
     loadData();
-  }, [projectId, token, navigate]);
+  }, [resolvedProjectId, token, navigate]);
 
   const memberCount = members.length;
 
@@ -75,12 +77,12 @@ export default function Project() {
   }, [members]);
 
   const refreshProjectData = async () => {
-    if (!projectId || !token) return;
+    if (!resolvedProjectId || !token) return;
 
     const [projectData, membersData, availableUsersData] = await Promise.all([
-      getProjectById(projectId, token),
-      getProjectMembers(projectId, token),
-      getAvailableUsersForProject(projectId, token),
+      getProjectById(resolvedProjectId, token),
+      getProjectMembers(resolvedProjectId, token),
+      getAvailableUsersForProject(resolvedProjectId, token),
     ]);
 
     setProject(projectData);
@@ -91,7 +93,7 @@ export default function Project() {
   const handleAddMember = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!projectId || !token) return;
+    if (!resolvedProjectId || !token) return;
 
     if (!selectedUserId || !projectRole.trim()) {
       setError("Selecciona un usuario e ingresa el rol del proyecto.");
@@ -104,7 +106,7 @@ export default function Project() {
       setSuccess("");
 
       await addMemberToProject(
-        projectId,
+        resolvedProjectId,
         {
           user_id: Number(selectedUserId),
           project_role: projectRole.trim(),
@@ -130,7 +132,7 @@ export default function Project() {
   };
 
   const handleRemoveMember = async (member: ProjectMember) => {
-    if (!projectId || !token) return;
+    if (!resolvedProjectId || !token) return;
 
     const confirmed = window.confirm(
       `¿Seguro que deseas quitar a ${member.user.full_name} del proyecto?`
@@ -143,7 +145,7 @@ export default function Project() {
       setError("");
       setSuccess("");
 
-      await removeMemberFromProject(projectId, member.id, token);
+      await removeMemberFromProject(resolvedProjectId, member.id, token);
       await refreshProjectData();
 
       setSuccess("Integrante removido del proyecto correctamente.");
@@ -258,81 +260,69 @@ export default function Project() {
 
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-5">
-            <UserPlus className="w-5 h-5 text-purple-400" />
+            <UserPlus className="w-5 h-5 text-cyan-400" />
             <h2 className="text-xl text-white">Agregar integrante</h2>
           </div>
 
-          {availableUsers.length === 0 ? (
-            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-slate-400 text-sm">
-              No hay usuarios disponibles para agregar a este proyecto.
-            </div>
-          ) : (
-            <form onSubmit={handleAddMember} className="space-y-4">
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Usuario</label>
-                <select
-                  value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-none focus:border-cyan-500"
-                  required
-                >
-                  <option value="">Selecciona un usuario</option>
-                  {availableUsers.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.full_name} — {user.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Rol en el proyecto</label>
-                <input
-                  type="text"
-                  value={projectRole}
-                  onChange={(e) => setProjectRole(e.target.value)}
-                  placeholder="Ej: Investigador, Backend Support, Diseñador UX"
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Capacidad semanal (horas)</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="0.5"
-                  value={weeklyCapacityHours}
-                  onChange={(e) => setWeeklyCapacityHours(e.target.value)}
-                  placeholder="Ej: 20"
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Disponibilidad (%)</label>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={availabilityPercentage}
-                  onChange={(e) => setAvailabilityPercentage(e.target.value)}
-                  placeholder="Ej: 80"
-                  className="w-full px-4 py-3 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="w-full py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all disabled:opacity-60"
+          <form onSubmit={handleAddMember} className="space-y-4">
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Usuario disponible</label>
+              <select
+                value={selectedUserId}
+                onChange={(e) => setSelectedUserId(e.target.value)}
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
               >
-                {submitting ? "Agregando..." : "Agregar al proyecto"}
-              </button>
-            </form>
-          )}
+                <option value="">Selecciona un usuario</option>
+                {availableUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.full_name} (@{user.username}) - {user.role_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Rol en el proyecto</label>
+              <input
+                type="text"
+                value={projectRole}
+                onChange={(e) => setProjectRole(e.target.value)}
+                placeholder="Ej.: Backend Support"
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Capacidad semanal (horas)</label>
+              <input
+                type="number"
+                value={weeklyCapacityHours}
+                onChange={(e) => setWeeklyCapacityHours(e.target.value)}
+                placeholder="Ej.: 20"
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Disponibilidad (%)</label>
+              <input
+                type="number"
+                value={availabilityPercentage}
+                onChange={(e) => setAvailabilityPercentage(e.target.value)}
+                placeholder="Ej.: 80"
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60"
+            >
+              <UserPlus className="w-4 h-4" />
+              {submitting ? "Agregando..." : "Agregar integrante"}
+            </button>
+          </form>
         </div>
       </div>
     </div>

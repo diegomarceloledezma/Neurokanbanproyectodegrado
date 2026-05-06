@@ -50,6 +50,10 @@ export function getCurrentUser(): StoredUser | null {
   return null;
 }
 
+export function getStoredUser(): StoredUser | null {
+  return getCurrentUser();
+}
+
 export function setCurrentUser(user: StoredUser): void {
   localStorage.setItem("auth_user", JSON.stringify(user));
 }

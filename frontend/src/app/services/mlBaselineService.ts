@@ -58,6 +58,13 @@ export type BaselineStatusResponse = {
   metadata: BaselineMetadata | null;
 };
 
+export type TrainBaselineResponse = BaselineMetadata & {
+  excluded_by_reason?: Record<string, number>;
+  raw_rows?: number;
+  clean_rows?: number;
+  excluded_rows?: number;
+};
+
 async function parseApiError(response: Response, fallback: string): Promise<never> {
   const data = await response.json().catch(() => null);
   throw new Error(data?.detail || fallback);
@@ -78,6 +85,30 @@ export async function getMlBaselineStatus(
 
   if (!response.ok) {
     await parseApiError(response, "No se pudo obtener el estado del modelo baseline.");
+  }
+
+  return response.json();
+}
+
+export async function trainCompactCleanedBaseline(
+  token?: string
+): Promise<TrainBaselineResponse> {
+  const authToken = token ?? getAccessToken();
+
+  const response = await fetch(
+    `${API_BASE_URL}/ml-baseline/train-from-history-compact-cleaned`,
+    {
+      method: "POST",
+      headers: authToken
+        ? {
+            Authorization: `Bearer ${authToken}`,
+          }
+        : undefined,
+    }
+  );
+
+  if (!response.ok) {
+    await parseApiError(response, "No se pudo reentrenar el modelo compacto.");
   }
 
   return response.json();

@@ -45,6 +45,16 @@ export default function MainLayout() {
       icon: FolderOpen,
     },
     {
+      to: "/team",
+      label: "Equipo",
+      icon: Users,
+    },
+    {
+      to: "/kanban-projects",
+      label: "Tablero Kanban",
+      icon: KanbanSquare,
+    },
+    {
       to: "/metrics",
       label: "Métricas",
       icon: BarChart3,

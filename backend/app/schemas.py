@@ -324,6 +324,7 @@ class AssignmentHistoryDetailedItem(BaseModel):
     active_tasks_snapshot: Optional[int] = None
     required_skills_count: Optional[int] = None
     matching_skills_count: Optional[int] = None
+    matching_ratio: Optional[float] = None
     estimated_hours_snapshot: Optional[float] = None
     priority_snapshot: Optional[str] = None
     complexity_snapshot: Optional[int] = None
@@ -333,7 +334,6 @@ class AssignmentHistoryDetailedItem(BaseModel):
     assigned_by_user: Optional[AssignmentHistoryUserSummary] = None
 
     model_config = ConfigDict(from_attributes=True)
-
 
 class MemberTaskItem(BaseModel):
     id: int
@@ -471,22 +471,26 @@ class TaskInsightResponse(BaseModel):
 
 
 class TaskOutcomeCreate(BaseModel):
+    completed_at: Optional[datetime] = None
     finished_on_time: Optional[bool] = None
     delay_hours: float = 0
     quality_score: Optional[int] = Field(default=None, ge=1, le=5)
     had_rework: bool = False
-    outcome_notes: Optional[str] = None
+    rework_count: Optional[int] = Field(default=None, ge=0)
+    notes: Optional[str] = None
 
 
 class TaskOutcomeResponse(BaseModel):
     id: int
     task_id: int
+    completed_at: Optional[datetime] = None
     finished_on_time: Optional[bool] = None
     delay_hours: float = 0
     quality_score: Optional[int] = None
     had_rework: bool = False
-    outcome_notes: Optional[str] = None
-    recorded_at: datetime
+    rework_count: int = 0
+    success_score: float
+    notes: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

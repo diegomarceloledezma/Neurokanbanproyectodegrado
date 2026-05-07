@@ -14,6 +14,7 @@ import MemberProfile from "./pages/MemberProfile";
 import TeamMetrics from "./pages/TeamMetrics";
 import DecisionHistory from "./pages/DecisionHistory";
 import ModelIntelligence from "./pages/ModelIntelligence";
+import MyTasks from "./pages/MyTasks";
 import MainLayout from "./components/MainLayout";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -36,26 +37,70 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, Component: Dashboard },
+      { path: "my-tasks", Component: MyTasks },
 
       { path: "projects", Component: Projects },
-
-      // Compatibilidad con ambas variantes
       { path: "projects/:id", Component: Project },
       { path: "project/:id", Component: Project },
 
-      { path: "team", Component: Team },
+      {
+        path: "team",
+        Component: () => (
+          <ProtectedRoute allowedRoles={["admin", "leader"]}>
+            <Team />
+          </ProtectedRoute>
+        ),
+      },
 
       { path: "kanban-projects", Component: KanbanProjects },
       { path: "kanban/:projectId", Component: KanbanBoard },
 
-      { path: "task/create/:projectId", Component: CreateTask },
+      {
+        path: "task/create/:projectId",
+        Component: () => (
+          <ProtectedRoute allowedRoles={["admin", "leader"]}>
+            <CreateTask />
+          </ProtectedRoute>
+        ),
+      },
+
       { path: "task/:taskId", Component: TaskDetail },
-      { path: "recommendation/:taskId", Component: SmartRecommendation },
+
+      {
+        path: "recommendation/:taskId",
+        Component: () => (
+          <ProtectedRoute allowedRoles={["admin", "leader"]}>
+            <SmartRecommendation />
+          </ProtectedRoute>
+        ),
+      },
+
       { path: "member/:memberId", Component: MemberProfile },
 
-      { path: "metrics", Component: TeamMetrics },
-      { path: "history", Component: DecisionHistory },
-      { path: "modelo-ia", Component: ModelIntelligence },
+      {
+        path: "metrics",
+        Component: () => (
+          <ProtectedRoute allowedRoles={["admin", "leader"]}>
+            <TeamMetrics />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "history",
+        Component: () => (
+          <ProtectedRoute allowedRoles={["admin", "leader"]}>
+            <DecisionHistory />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "modelo-ia",
+        Component: () => (
+          <ProtectedRoute allowedRoles={["admin", "leader"]}>
+            <ModelIntelligence />
+          </ProtectedRoute>
+        ),
+      },
 
       { path: "*", Component: NotFound },
     ],

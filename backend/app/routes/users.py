@@ -1,12 +1,13 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
 from app.models import User
+from app.routes.auth import get_current_user, has_any_role, require_roles
 from app.schemas import UserBase, UserCreate
 from app.security import hash_password
 
@@ -48,7 +49,10 @@ def _validate_password_strength(password: str) -> None:
 
 
 @router.get("/", response_model=List[UserBase])
-def get_users(db: Session = Depends(get_db)):
+def get_users(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
     users = (
         db.query(User)
         .options(joinedload(User.global_role))
@@ -59,7 +63,17 @@ def get_users(db: Session = Depends(get_db)):
 
 
 @router.get("/{user_id}", response_model=UserBase)
-def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
+def get_user_by_id(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin") and current_user.id != user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para consultar este usuario",
+        )
+
     user = (
         db.query(User)
         .options(joinedload(User.global_role))
@@ -127,3 +141,33 @@ def register_user(payload: UserCreate, db: Session = Depends(get_db)):
     except Exception:
         db.rollback()
         raise HTTPException(status_code=500, detail="Error interno al registrar el usuario")
+
+
+@router.patch("/{user_id}/status", response_model=UserBase)
+def update_user_status(
+    user_id: int,
+    is_active: bool = Query(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_roles("admin")),
+):
+    user = (
+        db.query(User)
+        .options(joinedload(User.global_role))
+        .filter(User.id == user_id)
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    if current_user.id == user_id and not is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="No puedes desactivar tu propio usuario",
+        )
+
+    user.is_active = is_active
+    db.commit()
+    db.refresh(user)
+
+    return user

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -100,6 +100,35 @@ def _register_failed_attempt(key: str) -> dict[str, Any]:
 def _clear_failed_attempts(key: str) -> None:
     if key in _login_attempts_store:
         del _login_attempts_store[key]
+
+
+def get_role_name(user: User | None) -> str:
+    if not user or not user.global_role or not user.global_role.name:
+        return ""
+    return user.global_role.name.strip().lower()
+
+
+def has_any_role(user: User | None, *roles: str) -> bool:
+    current_role = get_role_name(user)
+    normalized_roles = {role.strip().lower() for role in roles}
+    return current_role in normalized_roles
+
+
+def require_roles(*roles: str) -> Callable:
+    normalized_roles = {role.strip().lower() for role in roles}
+
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        current_role = get_role_name(current_user)
+
+        if current_role not in normalized_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para realizar esta acción",
+            )
+
+        return current_user
+
+    return dependency
 
 
 @router.post("/login", response_model=TokenResponse)

@@ -12,6 +12,7 @@ from app.models import (
     TaskRequiredSkill,
     User,
 )
+from app.routes.auth import get_current_user, has_any_role
 from app.schemas import (
     AssignmentHistoryDetailedItem,
     TaskAssignRequest,
@@ -39,6 +40,45 @@ def _load_task_with_relations(db: Session, task_id: int):
         .filter(Task.id == task_id)
         .first()
     )
+
+
+def _is_project_member(db: Session, project_id: int, user_id: int) -> bool:
+    return (
+        db.query(ProjectMember)
+        .filter(
+            ProjectMember.project_id == project_id,
+            ProjectMember.user_id == user_id,
+        )
+        .first()
+        is not None
+    )
+
+
+def _can_view_task(db: Session, task: Task, current_user: User) -> bool:
+    if has_any_role(current_user, "admin"):
+        return True
+
+    if has_any_role(current_user, "leader"):
+        if task.created_by == current_user.id:
+            return True
+
+        return _is_project_member(db, task.project_id, current_user.id)
+
+    # Integrante: solo sus tareas
+    return task.assigned_to == current_user.id
+
+
+def _can_manage_task(db: Session, task: Task, current_user: User) -> bool:
+    if has_any_role(current_user, "admin"):
+        return True
+
+    if has_any_role(current_user, "leader"):
+        if task.created_by == current_user.id:
+            return True
+
+        return _is_project_member(db, task.project_id, current_user.id)
+
+    return False
 
 
 def _compute_success_score(
@@ -125,7 +165,34 @@ def _finalize_effectiveness_bucket(bucket: dict) -> dict:
 
 
 @router.get("/project/{project_id}", response_model=List[TaskBase])
-def get_tasks_by_project(project_id: int, db: Session = Depends(get_db)):
+def get_tasks_by_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if has_any_role(current_user, "admin", "leader"):
+        if has_any_role(current_user, "leader") and not _is_project_member(
+            db, project_id, current_user.id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para ver las tareas de este proyecto",
+            )
+
+        tasks = (
+            db.query(Task)
+            .options(
+                joinedload(Task.assignee).joinedload(User.global_role),
+                joinedload(Task.creator).joinedload(User.global_role),
+                joinedload(Task.required_skills).joinedload(TaskRequiredSkill.skill),
+            )
+            .filter(Task.project_id == project_id)
+            .order_by(Task.id.asc())
+            .all()
+        )
+        return tasks
+
+    # Integrante: solo sus tareas dentro del proyecto
     tasks = (
         db.query(Task)
         .options(
@@ -133,7 +200,10 @@ def get_tasks_by_project(project_id: int, db: Session = Depends(get_db)):
             joinedload(Task.creator).joinedload(User.global_role),
             joinedload(Task.required_skills).joinedload(TaskRequiredSkill.skill),
         )
-        .filter(Task.project_id == project_id)
+        .filter(
+            Task.project_id == project_id,
+            Task.assigned_to == current_user.id,
+        )
         .order_by(Task.id.asc())
         .all()
     )
@@ -144,7 +214,14 @@ def get_tasks_by_project(project_id: int, db: Session = Depends(get_db)):
 def get_assignment_history(
     project_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver el historial de asignaciones",
+        )
+
     query = (
         db.query(TaskAssignmentHistory)
         .options(
@@ -156,6 +233,14 @@ def get_assignment_history(
     )
 
     if project_id is not None:
+        if has_any_role(current_user, "leader") and not _is_project_member(
+            db, project_id, current_user.id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para ver el historial de este proyecto",
+            )
+
         query = query.filter(Task.project_id == project_id)
 
     history = query.order_by(TaskAssignmentHistory.created_at.desc()).all()
@@ -166,7 +251,21 @@ def get_assignment_history(
 def get_assignment_effectiveness_summary(
     project_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver este resumen",
+        )
+
+    if project_id is not None and has_any_role(current_user, "leader"):
+        if not _is_project_member(db, project_id, current_user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para ver este proyecto",
+            )
+
     query = (
         db.query(TaskAssignmentHistory, TaskOutcome, Task)
         .join(Task, Task.id == TaskAssignmentHistory.task_id)
@@ -302,18 +401,67 @@ def get_assignment_effectiveness_summary(
     }
 
 
+# IMPORTANTE: esta ruta va antes de "/{task_id}"
+@router.get("/my", response_model=List[TaskBase])
+def get_my_tasks(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    tasks = (
+        db.query(Task)
+        .options(
+            joinedload(Task.assignee).joinedload(User.global_role),
+            joinedload(Task.creator).joinedload(User.global_role),
+            joinedload(Task.required_skills).joinedload(TaskRequiredSkill.skill),
+        )
+        .filter(Task.assigned_to == current_user.id)
+        .order_by(Task.id.asc())
+        .all()
+    )
+
+    return tasks
+
+
 @router.get("/{task_id}", response_model=TaskBase)
-def get_task_by_id(task_id: int, db: Session = Depends(get_db)):
+def get_task_by_id(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     task = _load_task_with_relations(db, task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
 
+    if not _can_view_task(db, task, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver esta tarea",
+        )
+
     return task
 
 
 @router.post("/", response_model=TaskBase)
-def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
+def create_task(
+    payload: TaskCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para crear tareas",
+        )
+
+    if has_any_role(current_user, "leader") and not _is_project_member(
+        db, payload.project_id, current_user.id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="No puedes crear tareas en un proyecto que no te pertenece",
+        )
+
     new_task = Task(
         project_id=payload.project_id,
         title=payload.title,
@@ -325,7 +473,7 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
         estimated_hours=payload.estimated_hours,
         actual_hours=payload.actual_hours,
         due_date=payload.due_date,
-        created_by=payload.created_by,
+        created_by=current_user.id,
         assigned_to=payload.assigned_to,
     )
 
@@ -348,11 +496,28 @@ def create_task(payload: TaskCreate, db: Session = Depends(get_db)):
 
 
 @router.patch("/{task_id}/assign", response_model=TaskBase)
-def assign_task(task_id: int, payload: TaskAssignRequest, db: Session = Depends(get_db)):
+def assign_task(
+    task_id: int,
+    payload: TaskAssignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para asignar tareas",
+        )
+
     task = load_task_or_none(db, task_id)
 
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    if not _can_manage_task(db, task, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para gestionar esta tarea",
+        )
 
     user = (
         db.query(User)
@@ -397,7 +562,7 @@ def assign_task(task_id: int, payload: TaskAssignRequest, db: Session = Depends(
     history = TaskAssignmentHistory(
         task_id=task.id,
         assigned_to=payload.assigned_to,
-        assigned_by=payload.assigned_by,
+        assigned_by=current_user.id,
         source=payload.source,
         strategy=payload.strategy,
         recommendation_score=(
@@ -431,11 +596,21 @@ def assign_task(task_id: int, payload: TaskAssignRequest, db: Session = Depends(
 
 
 @router.get("/{task_id}/assignment-history", response_model=List[AssignmentHistoryDetailedItem])
-def get_task_assignment_history(task_id: int, db: Session = Depends(get_db)):
+def get_task_assignment_history(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     task = db.query(Task).filter(Task.id == task_id).first()
 
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    if not _can_view_task(db, task, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver el historial de esta tarea",
+        )
 
     history = (
         db.query(TaskAssignmentHistory)
@@ -453,22 +628,43 @@ def get_task_assignment_history(task_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{task_id}/outcome", response_model=Optional[TaskOutcomeResponse])
-def get_task_outcome(task_id: int, db: Session = Depends(get_db)):
+def get_task_outcome(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     task = db.query(Task).filter(Task.id == task_id).first()
 
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    if not _can_view_task(db, task, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver el resultado de esta tarea",
+        )
 
     outcome = db.query(TaskOutcome).filter(TaskOutcome.task_id == task_id).first()
     return outcome
 
 
 @router.post("/{task_id}/outcome", response_model=TaskOutcomeResponse)
-def upsert_task_outcome(task_id: int, payload: TaskOutcomeCreate, db: Session = Depends(get_db)):
+def upsert_task_outcome(
+    task_id: int,
+    payload: TaskOutcomeCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     task = db.query(Task).filter(Task.id == task_id).first()
 
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    if not _can_manage_task(db, task, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para registrar el resultado de esta tarea",
+        )
 
     normalized_rework_count = (
         payload.rework_count

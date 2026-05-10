@@ -43,6 +43,47 @@ def _compute_success_label(success_score: float) -> int:
     return 1 if float(success_score) >= SUCCESS_LABEL_THRESHOLD else 0
 
 
+def _distribution(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    result: dict[str, int] = {}
+
+    for row in rows:
+        value = row.get(field)
+        label = str(value) if value not in (None, "") else "NO_DEFINIDO"
+        result[label] = result.get(label, 0) + 1
+
+    return result
+
+
+def _class_balance(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {
+            "negative_count": 0,
+            "positive_count": 0,
+            "minority_ratio_percent": 0.0,
+            "assessment": "sin_datos",
+        }
+
+    negatives = sum(1 for row in rows if int(row.get("success_label", 0)) == 0)
+    positives = sum(1 for row in rows if int(row.get("success_label", 0)) == 1)
+    minority = min(negatives, positives)
+    total = len(rows)
+    minority_ratio = round((minority / total) * 100, 2) if total > 0 else 0.0
+
+    if minority_ratio >= 35:
+        assessment = "alto"
+    elif minority_ratio >= 20:
+        assessment = "medio"
+    else:
+        assessment = "bajo"
+
+    return {
+        "negative_count": negatives,
+        "positive_count": positives,
+        "minority_ratio_percent": minority_ratio,
+        "assessment": assessment,
+    }
+
+
 def build_training_dataset_rows(db: Session) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
 
@@ -119,6 +160,8 @@ def _analyze_row_quality(row: dict[str, Any]) -> list[str]:
     recommendation_score = float(row.get("recommendation_score") or 0)
     skill_match_score = float(row.get("skill_match_score") or 0)
     source = (row.get("source") or "").strip().lower()
+    current_load_snapshot = float(row.get("current_load_snapshot") or 0)
+    availability_snapshot = float(row.get("availability_snapshot") or 0)
 
     if required_skills_count <= 0:
         reasons.append("no_required_skills")
@@ -139,6 +182,9 @@ def _analyze_row_quality(row: dict[str, Any]) -> list[str]:
         and matching_ratio == 0
     ):
         reasons.append("weak_backfill_signal")
+
+    if current_load_snapshot > 100 or availability_snapshot > 100:
+        reasons.append("invalid_operational_snapshot")
 
     return reasons
 
@@ -171,18 +217,8 @@ def build_clean_training_dataset_rows(db: Session) -> dict[str, Any]:
         "clean_rows": clean_rows,
         "excluded_rows": excluded_rows,
         "excluded_by_reason": excluded_by_reason,
+        "class_balance": _class_balance(clean_rows),
     }
-
-
-def _distribution(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
-    result: dict[str, int] = {}
-
-    for row in rows:
-        value = row.get(field)
-        label = str(value) if value not in (None, "") else "NO_DEFINIDO"
-        result[label] = result.get(label, 0) + 1
-
-    return result
 
 
 def build_training_dataset_preview(db: Session, limit: int = 20) -> dict[str, Any]:
@@ -193,6 +229,7 @@ def build_training_dataset_preview(db: Session, limit: int = 20) -> dict[str, An
         "label_distribution": _distribution(rows, "success_label"),
         "source_distribution": _distribution(rows, "source"),
         "strategy_distribution": _distribution(rows, "strategy"),
+        "class_balance": _class_balance(rows),
         "sample_rows": rows[:limit],
     }
 
@@ -212,6 +249,7 @@ def build_clean_training_dataset_preview(db: Session, limit: int = 20) -> dict[s
         "label_distribution": _distribution(clean_rows, "success_label"),
         "source_distribution": _distribution(clean_rows, "source"),
         "strategy_distribution": _distribution(clean_rows, "strategy"),
+        "class_balance": dataset["class_balance"],
         "sample_rows": clean_rows[:limit],
         "sample_excluded_rows": excluded_rows[:limit],
     }

@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, Query
+from typing import Set
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -13,7 +15,9 @@ from app.models import (
     TaskAssignmentHistory,
     TaskOutcome,
     TaskRequiredSkill,
+    User,
 )
+from app.routes.auth import get_current_user, has_any_role
 from app.services.historical_backfill_service import (
     backfill_assignment_history_from_existing_tasks,
 )
@@ -31,22 +35,96 @@ def _grouped_count(rows):
     ]
 
 
+def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
+    if has_any_role(current_user, "admin"):
+        rows = db.query(Project.id).all()
+        return {int(project_id) for (project_id,) in rows}
+
+    membership_rows = (
+        db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.id)
+        .all()
+    )
+    project_ids = {int(project_id) for (project_id,) in membership_rows}
+
+    if has_any_role(current_user, "leader"):
+        created_rows = (
+            db.query(Project.id)
+            .filter(Project.created_by == current_user.id)
+            .all()
+        )
+        project_ids.update(int(project_id) for (project_id,) in created_rows)
+
+    return project_ids
+
+
 @router.get("/report")
-def get_data_provenance_report(db: Session = Depends(get_db)):
-    total_projects = int(db.query(func.count(Project.id)).scalar() or 0)
+def get_data_provenance_report(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver el reporte de trazabilidad",
+        )
+
+    accessible_project_ids = _get_accessible_project_ids(db, current_user)
+    is_admin = has_any_role(current_user, "admin")
+
+    projects_query = db.query(Project)
+    tasks_query = db.query(Task)
+    project_memberships_query = db.query(ProjectMember)
+    assignment_history_query = db.query(TaskAssignmentHistory).join(
+        Task, Task.id == TaskAssignmentHistory.task_id
+    )
+    task_outcomes_query = db.query(TaskOutcome).join(Task, Task.id == TaskOutcome.task_id)
+    recommendations_query = db.query(Recommendation).join(Task, Task.id == Recommendation.task_id)
+    task_required_skills_query = db.query(TaskRequiredSkill).join(Task, Task.id == TaskRequiredSkill.task_id)
+
+    if not is_admin:
+        if accessible_project_ids:
+            projects_query = projects_query.filter(Project.id.in_(accessible_project_ids))
+            tasks_query = tasks_query.filter(Task.project_id.in_(accessible_project_ids))
+            project_memberships_query = project_memberships_query.filter(
+                ProjectMember.project_id.in_(accessible_project_ids)
+            )
+            assignment_history_query = assignment_history_query.filter(
+                Task.project_id.in_(accessible_project_ids)
+            )
+            task_outcomes_query = task_outcomes_query.filter(Task.project_id.in_(accessible_project_ids))
+            recommendations_query = recommendations_query.filter(Task.project_id.in_(accessible_project_ids))
+            task_required_skills_query = task_required_skills_query.filter(
+                Task.project_id.in_(accessible_project_ids)
+            )
+        else:
+            projects_query = projects_query.filter(False)
+            tasks_query = tasks_query.filter(False)
+            project_memberships_query = project_memberships_query.filter(False)
+            assignment_history_query = assignment_history_query.filter(False)
+            task_outcomes_query = task_outcomes_query.filter(False)
+            recommendations_query = recommendations_query.filter(False)
+            task_required_skills_query = task_required_skills_query.filter(False)
+
+    total_projects = int(projects_query.with_entities(func.count(Project.id)).scalar() or 0)
     active_projects = int(
-        db.query(func.count(Project.id)).filter(Project.status == "active").scalar() or 0
+        projects_query.filter(Project.status == "active")
+        .with_entities(func.count(Project.id))
+        .scalar()
+        or 0
     )
 
-    total_tasks = int(db.query(func.count(Task.id)).scalar() or 0)
+    total_tasks = int(tasks_query.with_entities(func.count(Task.id)).scalar() or 0)
     tasks_with_required_skills = int(
-        db.query(func.count(func.distinct(TaskRequiredSkill.task_id))).scalar() or 0
+        task_required_skills_query.with_entities(func.count(func.distinct(TaskRequiredSkill.task_id))).scalar() or 0
     )
     tasks_with_assignee = int(
-        db.query(func.count(Task.id)).filter(Task.assigned_to.isnot(None)).scalar() or 0
+        tasks_query.filter(Task.assigned_to.isnot(None)).with_entities(func.count(Task.id)).scalar() or 0
     )
 
-    total_project_memberships = int(db.query(func.count(ProjectMember.id)).scalar() or 0)
+    total_project_memberships = int(
+        project_memberships_query.with_entities(func.count(ProjectMember.id)).scalar() or 0
+    )
 
     total_skills = int(db.query(func.count(Skill.id)).scalar() or 0)
     skills_with_source = int(
@@ -56,24 +134,30 @@ def get_data_provenance_report(db: Session = Depends(get_db)):
 
     total_aliases = int(db.query(func.count(SkillAlias.id)).scalar() or 0)
 
-    total_recommendations = int(db.query(func.count(Recommendation.id)).scalar() or 0)
+    total_recommendations = int(
+        recommendations_query.with_entities(func.count(Recommendation.id)).scalar() or 0
+    )
 
     total_assignment_history = int(
-        db.query(func.count(TaskAssignmentHistory.id)).scalar() or 0
+        assignment_history_query.with_entities(func.count(TaskAssignmentHistory.id)).scalar() or 0
     )
 
     assignment_records_with_outcome = int(
         db.query(func.count(TaskAssignmentHistory.id))
+        .join(Task, Task.id == TaskAssignmentHistory.task_id)
         .join(TaskOutcome, TaskOutcome.task_id == TaskAssignmentHistory.task_id)
+        .filter(Task.project_id.in_(accessible_project_ids) if (not is_admin and accessible_project_ids) else True)
         .scalar()
         or 0
-    )
+    ) if is_admin or accessible_project_ids else 0
 
     assignment_records_without_outcome = max(
         0, total_assignment_history - assignment_records_with_outcome
     )
 
-    total_task_outcomes = int(db.query(func.count(TaskOutcome.id)).scalar() or 0)
+    total_task_outcomes = int(
+        task_outcomes_query.with_entities(func.count(TaskOutcome.id)).scalar() or 0
+    )
 
     skills_by_source = _grouped_count(
         db.query(
@@ -105,53 +189,68 @@ def get_data_provenance_report(db: Session = Depends(get_db)):
         .all()
     )
 
-    tasks_by_type = _grouped_count(
+    tasks_by_type_query = (
         db.query(Task.task_type, func.count(Task.id))
         .group_by(Task.task_type)
         .order_by(func.count(Task.id).desc())
-        .all()
     )
-
-    tasks_by_priority = _grouped_count(
+    tasks_by_priority_query = (
         db.query(Task.priority, func.count(Task.id))
         .group_by(Task.priority)
         .order_by(func.count(Task.id).desc())
-        .all()
     )
-
-    tasks_by_status = _grouped_count(
+    tasks_by_status_query = (
         db.query(Task.status, func.count(Task.id))
         .group_by(Task.status)
         .order_by(func.count(Task.id).desc())
-        .all()
     )
-
-    assignments_by_source = _grouped_count(
+    assignments_by_source_query = (
         db.query(TaskAssignmentHistory.source, func.count(TaskAssignmentHistory.id))
+        .join(Task, Task.id == TaskAssignmentHistory.task_id)
         .group_by(TaskAssignmentHistory.source)
         .order_by(func.count(TaskAssignmentHistory.id).desc())
-        .all()
     )
-
-    assignments_by_strategy = _grouped_count(
+    assignments_by_strategy_query = (
         db.query(
             func.coalesce(TaskAssignmentHistory.strategy, "NO_DEFINIDO"),
             func.count(TaskAssignmentHistory.id),
         )
+        .join(Task, Task.id == TaskAssignmentHistory.task_id)
         .group_by(func.coalesce(TaskAssignmentHistory.strategy, "NO_DEFINIDO"))
         .order_by(func.count(TaskAssignmentHistory.id).desc())
-        .all()
     )
-
-    recommendations_by_strategy = _grouped_count(
+    recommendations_by_strategy_query = (
         db.query(
             func.coalesce(Recommendation.strategy, "NO_DEFINIDO"),
             func.count(Recommendation.id),
         )
+        .join(Task, Task.id == Recommendation.task_id)
         .group_by(func.coalesce(Recommendation.strategy, "NO_DEFINIDO"))
         .order_by(func.count(Recommendation.id).desc())
-        .all()
     )
+
+    if not is_admin:
+        if accessible_project_ids:
+            tasks_by_type_query = tasks_by_type_query.filter(Task.project_id.in_(accessible_project_ids))
+            tasks_by_priority_query = tasks_by_priority_query.filter(Task.project_id.in_(accessible_project_ids))
+            tasks_by_status_query = tasks_by_status_query.filter(Task.project_id.in_(accessible_project_ids))
+            assignments_by_source_query = assignments_by_source_query.filter(Task.project_id.in_(accessible_project_ids))
+            assignments_by_strategy_query = assignments_by_strategy_query.filter(Task.project_id.in_(accessible_project_ids))
+            recommendations_by_strategy_query = recommendations_by_strategy_query.filter(Task.project_id.in_(accessible_project_ids))
+        else:
+            tasks_by_type_query = tasks_by_type_query.filter(False)
+            tasks_by_priority_query = tasks_by_priority_query.filter(False)
+            tasks_by_status_query = tasks_by_status_query.filter(False)
+            assignments_by_source_query = assignments_by_source_query.filter(False)
+            assignments_by_strategy_query = assignments_by_strategy_query.filter(False)
+            recommendations_by_strategy_query = recommendations_by_strategy_query.filter(False)
+
+    tasks_by_type = _grouped_count(tasks_by_type_query.all())
+    tasks_by_priority = _grouped_count(tasks_by_priority_query.all())
+    tasks_by_status = _grouped_count(tasks_by_status_query.all())
+    assignments_by_source = _grouped_count(assignments_by_source_query.all())
+    assignments_by_strategy = _grouped_count(assignments_by_strategy_query.all())
+    recommendations_by_strategy = _grouped_count(recommendations_by_strategy_query.all())
 
     return {
         "projects": {
@@ -192,28 +291,61 @@ def get_data_provenance_report(db: Session = Depends(get_db)):
 
 
 @router.get("/training-readiness")
-def get_training_readiness(db: Session = Depends(get_db)):
+def get_training_readiness(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver el readiness del entrenamiento",
+        )
+
+    accessible_project_ids = _get_accessible_project_ids(db, current_user)
+    is_admin = has_any_role(current_user, "admin")
+
     total_skills = int(db.query(func.count(Skill.id)).scalar() or 0)
     skills_with_source = int(
         db.query(func.count(Skill.id)).filter(Skill.source_name.isnot(None)).scalar() or 0
     )
 
-    total_tasks = int(db.query(func.count(Task.id)).scalar() or 0)
+    tasks_query = db.query(Task)
+    task_required_skills_query = db.query(TaskRequiredSkill).join(Task, Task.id == TaskRequiredSkill.task_id)
+    assignment_history_query = db.query(TaskAssignmentHistory).join(Task, Task.id == TaskAssignmentHistory.task_id)
+    recommendations_query = db.query(Recommendation).join(Task, Task.id == Recommendation.task_id)
+
+    if not is_admin:
+        if accessible_project_ids:
+            tasks_query = tasks_query.filter(Task.project_id.in_(accessible_project_ids))
+            task_required_skills_query = task_required_skills_query.filter(Task.project_id.in_(accessible_project_ids))
+            assignment_history_query = assignment_history_query.filter(Task.project_id.in_(accessible_project_ids))
+            recommendations_query = recommendations_query.filter(Task.project_id.in_(accessible_project_ids))
+        else:
+            tasks_query = tasks_query.filter(False)
+            task_required_skills_query = task_required_skills_query.filter(False)
+            assignment_history_query = assignment_history_query.filter(False)
+            recommendations_query = recommendations_query.filter(False)
+
+    total_tasks = int(tasks_query.with_entities(func.count(Task.id)).scalar() or 0)
     tasks_with_required_skills = int(
-        db.query(func.count(func.distinct(TaskRequiredSkill.task_id))).scalar() or 0
+        task_required_skills_query.with_entities(func.count(func.distinct(TaskRequiredSkill.task_id))).scalar() or 0
     )
 
     total_assignment_history = int(
-        db.query(func.count(TaskAssignmentHistory.id)).scalar() or 0
+        assignment_history_query.with_entities(func.count(TaskAssignmentHistory.id)).scalar() or 0
     )
     assignment_records_with_outcome = int(
         db.query(func.count(TaskAssignmentHistory.id))
+        .join(Task, Task.id == TaskAssignmentHistory.task_id)
         .join(TaskOutcome, TaskOutcome.task_id == TaskAssignmentHistory.task_id)
+        .filter(Task.project_id.in_(accessible_project_ids) if (not is_admin and accessible_project_ids) else True)
         .scalar()
         or 0
-    )
+    ) if is_admin or accessible_project_ids else 0
 
-    total_recommendations = int(db.query(func.count(Recommendation.id)).scalar() or 0)
+    total_recommendations = int(
+        recommendations_query.with_entities(func.count(Recommendation.id)).scalar() or 0
+    )
     total_aliases = int(db.query(func.count(SkillAlias.id)).scalar() or 0)
 
     skills_source_coverage = round(
@@ -285,5 +417,12 @@ def get_training_readiness(db: Session = Depends(get_db)):
 def run_assignment_history_backfill(
     limit: int = Query(default=200, ge=1, le=5000),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede ejecutar el backfill del historial",
+        )
+
     return backfill_assignment_history_from_existing_tasks(db, limit=limit)

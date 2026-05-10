@@ -19,7 +19,8 @@ import {
   getTaskAssignmentHistory,
   type TaskAssignmentHistoryItem,
 } from "../services/taskHistoryService";
-import { getAccessToken } from "../services/sessionService";
+import { getAccessToken, getCurrentUser } from "../services/sessionService";
+import { updateTaskStatus } from "../services/taskWorkflowService";
 
 function formatDate(value?: string | null) {
   if (!value) return "No registrada";
@@ -109,6 +110,7 @@ export default function TaskDetail() {
   const { taskId } = useParams();
   const navigate = useNavigate();
   const token = getAccessToken();
+  const currentUser = getCurrentUser();
 
   const [task, setTask] = useState<TaskResponse | null>(null);
   const [outcome, setOutcome] = useState<TaskOutcomeResponse | null>(null);
@@ -122,6 +124,12 @@ export default function TaskDetail() {
   const [reworkCount, setReworkCount] = useState("0");
   const [notes, setNotes] = useState("");
 
+  const [statusValue, setStatusValue] = useState<
+    "pending" | "in_progress" | "review" | "blocked" | "done"
+  >("pending");
+  const [actualHoursValue, setActualHoursValue] = useState("");
+  const [savingStatus, setSavingStatus] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [savingOutcome, setSavingOutcome] = useState(false);
   const [error, setError] = useState("");
@@ -130,6 +138,32 @@ export default function TaskDetail() {
   const latestDecision = useMemo(() => {
     return assignmentHistory.length > 0 ? assignmentHistory[0] : null;
   }, [assignmentHistory]);
+
+  const roleName = (
+    currentUser?.role_name ||
+    currentUser?.global_role?.name ||
+    ""
+  ).toLowerCase();
+
+  const isAdminOrLeader = roleName === "admin" || roleName === "leader";
+  const isAssignedMember = task?.assignee?.id === currentUser?.id;
+  const canUpdateTaskStatus = isAdminOrLeader || isAssignedMember;
+  const canUseRecommendation = isAdminOrLeader;
+  const canRegisterOutcome = isAdminOrLeader;
+
+  const availableStatusOptions = isAdminOrLeader
+    ? [
+        { value: "pending", label: "Pendiente" },
+        { value: "in_progress", label: "En progreso" },
+        { value: "review", label: "En revisión" },
+        { value: "blocked", label: "Bloqueada" },
+        { value: "done", label: "Completada" },
+      ]
+    : [
+        { value: "in_progress", label: "En progreso" },
+        { value: "review", label: "En revisión" },
+        { value: "blocked", label: "Bloqueada" },
+      ];
 
   useEffect(() => {
     if (!taskId || !token) return;
@@ -150,15 +184,23 @@ export default function TaskDetail() {
         setOutcome(outcomeData);
         setAssignmentHistory(historyData);
 
+        setStatusValue(
+          (taskData.status as "pending" | "in_progress" | "review" | "blocked" | "done") ||
+            "pending"
+        );
+        setActualHoursValue(
+          taskData.actual_hours !== null && taskData.actual_hours !== undefined
+            ? String(taskData.actual_hours)
+            : ""
+        );
+
         if (outcomeData) {
           setCompletedAt(
             outcomeData.completed_at
               ? new Date(outcomeData.completed_at).toISOString().slice(0, 16)
               : ""
           );
-          setFinishedOnTime(
-            outcomeData.finished_on_time === false ? "false" : "true"
-          );
+          setFinishedOnTime(outcomeData.finished_on_time === false ? "false" : "true");
           setDelayHours(String(outcomeData.delay_hours ?? 0));
           setQualityScore(String(outcomeData.quality_score ?? 5));
           setHadRework(Boolean(outcomeData.had_rework));
@@ -175,6 +217,49 @@ export default function TaskDetail() {
 
     loadData();
   }, [taskId, token]);
+
+  const handleUpdateTaskStatus = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!taskId || !token) return;
+
+    try {
+      setSavingStatus(true);
+      setError("");
+      setSuccessMessage("");
+
+      const updatedTask = await updateTaskStatus(
+        taskId,
+        {
+          status: statusValue,
+          actual_hours: actualHoursValue !== "" ? Number(actualHoursValue) : null,
+        },
+        token
+      );
+
+      setTask(updatedTask);
+      setStatusValue(
+        (updatedTask.status as "pending" | "in_progress" | "review" | "blocked" | "done") ||
+          "pending"
+      );
+      setActualHoursValue(
+        updatedTask.actual_hours !== null && updatedTask.actual_hours !== undefined
+          ? String(updatedTask.actual_hours)
+          : ""
+      );
+
+      if (statusValue === "review") {
+        setSuccessMessage("Estado actualizado correctamente. La tarea quedó en revisión.");
+      } else {
+        setSuccessMessage("Estado actualizado correctamente.");
+      }
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo actualizar el estado de la tarea.");
+    } finally {
+      setSavingStatus(false);
+    }
+  };
 
   const handleSaveOutcome = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -206,9 +291,7 @@ export default function TaskDetail() {
       setTask(updatedTask);
 
       setCompletedAt(
-        saved.completed_at
-          ? new Date(saved.completed_at).toISOString().slice(0, 16)
-          : ""
+        saved.completed_at ? new Date(saved.completed_at).toISOString().slice(0, 16) : ""
       );
       setFinishedOnTime(saved.finished_on_time === false ? "false" : "true");
       setDelayHours(String(saved.delay_hours ?? 0));
@@ -256,13 +339,15 @@ export default function TaskDetail() {
             </p>
           </div>
 
-          <button
-            onClick={() => navigate(`/recommendation/${task.id}`)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all"
-          >
-            <BrainCircuit className="w-4 h-4" />
-            Recomendación inteligente
-          </button>
+          {canUseRecommendation && (
+            <button
+              onClick={() => navigate(`/recommendation/${task.id}`)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all"
+            >
+              <BrainCircuit className="w-4 h-4" />
+              Recomendación inteligente
+            </button>
+          )}
         </div>
       </div>
 
@@ -309,6 +394,11 @@ export default function TaskDetail() {
             <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
               <p className="text-slate-400 text-xs mb-1">Horas estimadas</p>
               <p className="text-white">{task.estimated_hours ?? "No definidas"}</p>
+            </div>
+
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Horas reales</p>
+              <p className="text-white">{task.actual_hours ?? "No registradas"}</p>
             </div>
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
@@ -396,6 +486,70 @@ export default function TaskDetail() {
         </div>
       </div>
 
+      {canUpdateTaskStatus && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <ClipboardList className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-2xl text-white">Actualizar estado de la tarea</h2>
+          </div>
+
+          <form onSubmit={handleUpdateTaskStatus} className="space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Nuevo estado</label>
+                <select
+                  value={statusValue}
+                  onChange={(e) =>
+                    setStatusValue(
+                      e.target.value as "pending" | "in_progress" | "review" | "blocked" | "done"
+                    )
+                  }
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
+                >
+                  {availableStatusOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Horas reales trabajadas</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={actualHoursValue}
+                  onChange={(e) => setActualHoursValue(e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
+                />
+              </div>
+            </div>
+
+            {!isAdminOrLeader && (
+              <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-4 text-cyan-300 text-sm">
+                Como integrante puedes mover la tarea a En progreso, En revisión o Bloqueada.
+              </div>
+            )}
+
+            {isAdminOrLeader && (
+              <div className="rounded-lg border border-purple-500/20 bg-purple-500/10 p-4 text-purple-300 text-sm">
+                Como líder o administrador también puedes marcar la tarea como completada.
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={savingStatus}
+              className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60"
+            >
+              {savingStatus ? "Guardando..." : "Guardar estado"}
+            </button>
+          </form>
+        </div>
+      )}
+
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">
           <History className="w-5 h-5 text-purple-400" />
@@ -445,7 +599,9 @@ export default function TaskDetail() {
 
                 <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
                   <p className="text-slate-400 text-xs mb-1">Disponibilidad snapshot</p>
-                  <p className="text-white">{formatPercentNumber(latestDecision.availability_snapshot)}</p>
+                  <p className="text-white">
+                    {formatPercentNumber(latestDecision.availability_snapshot)}
+                  </p>
                 </div>
               </div>
 
@@ -519,108 +675,110 @@ export default function TaskDetail() {
         )}
       </div>
 
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <CalendarClock className="w-5 h-5 text-purple-400" />
-          <h2 className="text-2xl text-white">Registrar resultado de la tarea</h2>
-        </div>
+      {canRegisterOutcome && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <CalendarClock className="w-5 h-5 text-purple-400" />
+            <h2 className="text-2xl text-white">Registrar resultado de la tarea</h2>
+          </div>
 
-        <form onSubmit={handleSaveOutcome} className="space-y-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-slate-300 text-sm mb-2">Fecha de finalización</label>
-              <input
-                type="datetime-local"
-                value={completedAt}
-                onChange={(e) => setCompletedAt(e.target.value)}
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-300 text-sm mb-2">¿Terminó a tiempo?</label>
-              <select
-                value={finishedOnTime}
-                onChange={(e) => setFinishedOnTime(e.target.value)}
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-              >
-                <option value="true">Sí</option>
-                <option value="false">No</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-slate-300 text-sm mb-2">Horas de retraso</label>
-              <input
-                type="number"
-                min="0"
-                step="0.5"
-                value={delayHours}
-                onChange={(e) => setDelayHours(e.target.value)}
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-300 text-sm mb-2">Calidad (1 a 5)</label>
-              <input
-                type="number"
-                min="1"
-                max="5"
-                value={qualityScore}
-                onChange={(e) => setQualityScore(e.target.value)}
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-300 text-sm mb-2">Cantidad de retrabajos</label>
-              <input
-                type="number"
-                min="0"
-                value={reworkCount}
-                onChange={(e) => setReworkCount(e.target.value)}
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-              />
-            </div>
-
-            <div className="flex items-end">
-              <label className="inline-flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 w-full">
+          <form onSubmit={handleSaveOutcome} className="space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Fecha de finalización</label>
                 <input
-                  type="checkbox"
-                  checked={hadRework}
-                  onChange={(e) => setHadRework(e.target.checked)}
+                  type="datetime-local"
+                  value={completedAt}
+                  onChange={(e) => setCompletedAt(e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
                 />
-                <span className="text-slate-200">La tarea tuvo retrabajo</span>
-              </label>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">¿Terminó a tiempo?</label>
+                <select
+                  value={finishedOnTime}
+                  onChange={(e) => setFinishedOnTime(e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
+                >
+                  <option value="true">Sí</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Horas de retraso</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={delayHours}
+                  onChange={(e) => setDelayHours(e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Calidad (1 a 5)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="5"
+                  value={qualityScore}
+                  onChange={(e) => setQualityScore(e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 text-sm mb-2">Cantidad de retrabajos</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={reworkCount}
+                  onChange={(e) => setReworkCount(e.target.value)}
+                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
+                />
+              </div>
+
+              <div className="flex items-end">
+                <label className="inline-flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 w-full">
+                  <input
+                    type="checkbox"
+                    checked={hadRework}
+                    onChange={(e) => setHadRework(e.target.checked)}
+                  />
+                  <span className="text-slate-200">La tarea tuvo retrabajo</span>
+                </label>
+              </div>
             </div>
-          </div>
 
-          <div>
-            <label className="block text-slate-300 text-sm mb-2">Notas u observaciones</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={4}
-              placeholder="Describe el resultado final, problemas encontrados o aprendizajes."
-              className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500"
-            />
-          </div>
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Notas u observaciones</label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={4}
+                placeholder="Describe el resultado final, problemas encontrados o aprendizajes."
+                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500"
+              />
+            </div>
 
-          <button
-            type="submit"
-            disabled={savingOutcome}
-            className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60"
-          >
-            {savingOutcome ? (
-              <CheckCircle2 className="w-4 h-4 animate-pulse" />
-            ) : (
-              <Save className="w-4 h-4" />
-            )}
-            {savingOutcome ? "Guardando..." : "Guardar resultado"}
-          </button>
-        </form>
-      </div>
+            <button
+              type="submit"
+              disabled={savingOutcome}
+              className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60"
+            >
+              {savingOutcome ? (
+                <CheckCircle2 className="w-4 h-4 animate-pulse" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              {savingOutcome ? "Guardando..." : "Guardar resultado"}
+            </button>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

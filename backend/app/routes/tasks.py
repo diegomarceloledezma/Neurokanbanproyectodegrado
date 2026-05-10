@@ -1,6 +1,7 @@
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
@@ -27,6 +28,11 @@ from app.services.recommendation_engine import (
 )
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
+
+
+class TaskStatusUpdate(BaseModel):
+    status: Literal["pending", "in_progress", "review", "blocked", "done"]
+    actual_hours: Optional[float] = Field(default=None, ge=0)
 
 
 def _load_task_with_relations(db: Session, task_id: int):
@@ -64,7 +70,6 @@ def _can_view_task(db: Session, task: Task, current_user: User) -> bool:
 
         return _is_project_member(db, task.project_id, current_user.id)
 
-    # Integrante: solo sus tareas
     return task.assigned_to == current_user.id
 
 
@@ -79,6 +84,16 @@ def _can_manage_task(db: Session, task: Task, current_user: User) -> bool:
         return _is_project_member(db, task.project_id, current_user.id)
 
     return False
+
+
+def _can_update_task_status(db: Session, task: Task, current_user: User) -> bool:
+    if has_any_role(current_user, "admin"):
+        return True
+
+    if has_any_role(current_user, "leader"):
+        return _can_manage_task(db, task, current_user)
+
+    return task.assigned_to == current_user.id
 
 
 def _compute_success_score(
@@ -192,7 +207,6 @@ def get_tasks_by_project(
         )
         return tasks
 
-    # Integrante: solo sus tareas dentro del proyecto
     tasks = (
         db.query(Task)
         .options(
@@ -401,7 +415,6 @@ def get_assignment_effectiveness_summary(
     }
 
 
-# IMPORTANTE: esta ruta va antes de "/{task_id}"
 @router.get("/my", response_model=List[TaskBase])
 def get_my_tasks(
     db: Session = Depends(get_db),
@@ -420,6 +433,50 @@ def get_my_tasks(
     )
 
     return tasks
+
+
+@router.patch("/{task_id}/status", response_model=TaskBase)
+def update_task_status(
+    task_id: int,
+    payload: TaskStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    task = load_task_or_none(db, task_id)
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    if not _can_update_task_status(db, task, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para actualizar el estado de esta tarea",
+        )
+
+    is_admin_or_leader = has_any_role(current_user, "admin", "leader")
+
+    if not is_admin_or_leader:
+        if task.assigned_to != current_user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Solo puedes actualizar tareas asignadas a ti",
+            )
+
+        if payload.status not in {"in_progress", "review", "blocked"}:
+            raise HTTPException(
+                status_code=403,
+                detail="Como integrante solo puedes cambiar el estado a En progreso, En revisión o Bloqueada",
+            )
+
+    if payload.actual_hours is not None:
+        task.actual_hours = payload.actual_hours
+
+    task.status = payload.status
+
+    db.commit()
+
+    updated_task = _load_task_with_relations(db, task.id)
+    return updated_task
 
 
 @router.get("/{task_id}", response_model=TaskBase)

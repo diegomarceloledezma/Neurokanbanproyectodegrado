@@ -1,11 +1,12 @@
-from typing import List, Optional
+from typing import List, Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.models import Skill, SkillAlias
+from app.models import Project, ProjectMember, Skill, SkillAlias, Task, User
+from app.routes.auth import get_current_user, has_any_role
 from app.schemas import (
     SkillAliasResponse,
     SkillAliasSeedResponse,
@@ -19,14 +20,55 @@ from app.services.skills_catalog_seed import seed_curated_skills_catalog
 router = APIRouter(prefix="/skills", tags=["Skills"])
 
 
+def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
+    if has_any_role(current_user, "admin"):
+        rows = db.query(Project.id).all()
+        return {int(project_id) for (project_id,) in rows}
+
+    membership_rows = (
+        db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.id)
+        .all()
+    )
+    project_ids = {int(project_id) for (project_id,) in membership_rows}
+
+    if has_any_role(current_user, "leader"):
+        created_rows = (
+            db.query(Project.id)
+            .filter(Project.created_by == current_user.id)
+            .all()
+        )
+        project_ids.update(int(project_id) for (project_id,) in created_rows)
+
+    return project_ids
+
+
 @router.post("/seed-curated-catalog", response_model=SkillCatalogSeedResponse)
-def seed_skills_catalog(db: Session = Depends(get_db)):
+def seed_skills_catalog(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede sembrar el catálogo curado",
+        )
+
     result = seed_curated_skills_catalog(db)
     return SkillCatalogSeedResponse(**result)
 
 
 @router.post("/aliases/seed-curated", response_model=SkillAliasSeedResponse)
-def seed_skill_aliases(db: Session = Depends(get_db)):
+def seed_skill_aliases(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede sembrar aliases curados",
+        )
+
     result = seed_curated_skill_aliases(db)
     return SkillAliasSeedResponse(**result)
 
@@ -38,6 +80,7 @@ def get_skills(
     source_name: Optional[str] = Query(default=None),
     only_active: bool = Query(default=True),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     skills_query = db.query(Skill)
 
@@ -79,6 +122,7 @@ def get_skill_aliases(
     skill_id: Optional[int] = Query(default=None),
     source_name: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     aliases_query = db.query(SkillAlias).options(joinedload(SkillAlias.skill))
 
@@ -119,7 +163,30 @@ def get_skill_aliases(
 
 
 @router.get("/match-preview/task/{task_id}/user/{user_id}")
-def get_skill_match_preview(task_id: int, user_id: int, db: Session = Depends(get_db)):
+def get_skill_match_preview(
+    task_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para consultar el preview de matching",
+        )
+
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    if has_any_role(current_user, "leader"):
+        accessible_project_ids = _get_accessible_project_ids(db, current_user)
+        if task.project_id not in accessible_project_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para consultar esa tarea",
+            )
+
     try:
         return preview_task_user_skill_match(db, task_id, user_id)
     except ValueError as exc:

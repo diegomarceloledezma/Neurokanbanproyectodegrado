@@ -25,15 +25,13 @@ from app.schemas import (
 )
 from app.services.ml_baseline_service import (
     build_feature_payload,
+    get_baseline_status,
     load_baseline_model,
     predict_success_probability_from_features,
 )
-from app.services.skill_matching import preview_task_user_skill_match
 
 ALLOWED_STRATEGIES = {"balance", "efficiency", "urgency", "learning"}
 ALLOWED_MODES = {"heuristic", "hybrid"}
-HEURISTIC_WEIGHT = 0.80
-BASELINE_WEIGHT = 0.20
 ACTIVE_STATUSES = {"pending", "in_progress", "review", "blocked"}
 COMPLETED_STATUSES = {"done"}
 
@@ -59,14 +57,6 @@ def _is_sqlite(db: Session) -> bool:
 def _next_sqlite_pk(db: Session, model) -> int:
     current_max = db.query(func.max(model.id)).scalar()
     return int(current_max or 0) + 1
-
-
-def _probability_to_ml_signal(probability: float | None) -> float | None:
-    if probability is None:
-        return None
-
-    prob = max(0.0, min(1.0, float(probability)))
-    return round(50.0 + ((prob - 0.5) * 40.0), 2)
 
 
 def load_task_or_none(db: Session, task_id: int):
@@ -169,7 +159,11 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     on_time_rate = 0.0
     if on_time_rows:
         on_time_rate = round(
-            (sum(1 for row in on_time_rows if row.finished_on_time) / len(on_time_rows)) * 100,
+            (
+                sum(1 for row in on_time_rows if row.finished_on_time)
+                / len(on_time_rows)
+            )
+            * 100,
             2,
         )
 
@@ -183,7 +177,11 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     no_rework_rate = 100.0
     if rework_rows:
         no_rework_rate = round(
-            (sum(1 for row in rework_rows if not row.had_rework) / len(rework_rows)) * 100,
+            (
+                sum(1 for row in rework_rows if not row.had_rework)
+                / len(rework_rows)
+            )
+            * 100,
             2,
         )
 
@@ -209,16 +207,9 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     }
 
 
-def calculate_skill_match(db: Session, task: Task, member: User):
-    preview = preview_task_user_skill_match(db, task.id, member.id)
-
-    required_results = preview.get("required_skill_results", [])
-    required_count = int(preview.get("required_skills_count", 0) or 0)
-    matched_count = int(preview.get("matched_skills_count", 0) or 0)
-    matching_ratio = float(preview.get("matching_ratio", 0.0) or 0.0)
-    summary = preview.get("match_summary", {}) or {}
-
-    if required_count == 0:
+def calculate_skill_match(task: Task, member: User):
+    required_skills = task.required_skills or []
+    if not required_skills:
         return {
             "score": 55.0,
             "matching_skills": [],
@@ -226,69 +217,47 @@ def calculate_skill_match(db: Session, task: Task, member: User):
             "strong_matches": 0,
             "partial_matches": 0,
             "required_count": 0,
-            "matched_count": 0,
-            "matching_ratio": 0.0,
-            "exact_matches": 0,
-            "alias_matches": 0,
-            "category_matches": 0,
-            "matched_details": [],
         }
+
+    member_skills = {user_skill.skill_id: user_skill for user_skill in member.user_skills or []}
 
     total_score = 0.0
     matching_skills: list[str] = []
     missing_skills: list[str] = []
-    matched_details: list[dict[str, Any]] = []
+    strong_matches = 0
+    partial_matches = 0
 
-    for item in required_results:
-        match_type = item.get("match_type", "none")
-        required_skill_name = item.get("required_skill_name")
-        matched_user_skill = item.get("matched_user_skill")
-        matched_user_level = _to_float(item.get("matched_user_level"))
-        required_level = max(_to_float(item.get("required_level"), 1.0), 1.0)
-        years_experience = _to_float(item.get("matched_user_years_experience"))
+    for required in required_skills:
+        required_level = max(required.required_level or 1, 1)
+        user_skill = member_skills.get(required.skill_id)
+        skill_name = required.skill.name if required.skill else f"skill_{required.skill_id}"
 
-        if match_type == "exact":
-            base_points = 100.0
-        elif match_type == "alias":
-            base_points = 85.0
-        elif match_type == "category":
-            base_points = 55.0
+        if not user_skill:
+            missing_skills.append(skill_name)
+            continue
+
+        user_level = max(user_skill.level or 0, 0)
+        coverage = min(user_level / required_level, 1.0) * 100
+        experience_bonus = min(_to_float(user_skill.years_experience) * 4, 12)
+        verified_bonus = 4 if user_skill.verified_by_leader else 0
+        skill_points = _clamp(coverage + experience_bonus + verified_bonus)
+        total_score += skill_points
+
+        matching_skills.append(skill_name)
+        if user_level >= required_level:
+            strong_matches += 1
         else:
-            base_points = 0.0
+            partial_matches += 1
 
-        if match_type != "none":
-            level_coverage_bonus = min((matched_user_level / required_level), 1.0) * 10.0
-            experience_bonus = min(years_experience * 3.0, 8.0)
-            skill_points = _clamp(base_points + level_coverage_bonus + experience_bonus)
-
-            total_score += skill_points
-            matching_skills.append(required_skill_name or "Habilidad")
-            matched_details.append(
-                {
-                    "required_skill_name": required_skill_name,
-                    "matched_user_skill": matched_user_skill,
-                    "match_type": match_type,
-                    "matched_by": item.get("matched_by"),
-                }
-            )
-        else:
-            missing_skills.append(required_skill_name or "Habilidad")
-
-    score = round(total_score / required_count, 2)
+    score = round(total_score / len(required_skills), 2)
 
     return {
         "score": score,
         "matching_skills": matching_skills,
         "missing_skills": missing_skills,
-        "strong_matches": int(summary.get("exact_matches", 0) or 0),
-        "partial_matches": int(summary.get("alias_matches", 0) or 0) + int(summary.get("category_matches", 0) or 0),
-        "required_count": required_count,
-        "matched_count": matched_count,
-        "matching_ratio": matching_ratio,
-        "exact_matches": int(summary.get("exact_matches", 0) or 0),
-        "alias_matches": int(summary.get("alias_matches", 0) or 0),
-        "category_matches": int(summary.get("category_matches", 0) or 0),
-        "matched_details": matched_details,
+        "strong_matches": strong_matches,
+        "partial_matches": partial_matches,
+        "required_count": len(required_skills),
     }
 
 
@@ -318,6 +287,36 @@ def calculate_component_scores(task: Task, metrics: dict, skill_match: dict):
     }
 
 
+def _fit_priority(skill_match: dict) -> int:
+    required_count = int(skill_match.get("required_count", 0) or 0)
+    strong_matches = int(skill_match.get("strong_matches", 0) or 0)
+    matching_count = int(len(skill_match.get("matching_skills", [])))
+
+    if required_count <= 0:
+        return 1
+    if strong_matches >= required_count:
+        return 3
+    if matching_count > 0:
+        return 2
+    return 0
+
+
+def _build_pool_context(raw_items: list[dict[str, Any]]) -> dict[str, Any]:
+    has_exact_fit = any(item["fit_priority"] == 3 for item in raw_items)
+    has_partial_fit = any(item["fit_priority"] >= 2 for item in raw_items)
+
+    best_exact_score = None
+    exact_scores = [item["base_score"] for item in raw_items if item["fit_priority"] == 3]
+    if exact_scores:
+        best_exact_score = max(exact_scores)
+
+    return {
+        "has_exact_fit": has_exact_fit,
+        "has_partial_fit": has_partial_fit,
+        "best_exact_score": best_exact_score,
+    }
+
+
 def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str):
     components = calculate_component_scores(task, metrics, skill_match)
 
@@ -328,39 +327,39 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
 
     if strategy == "efficiency":
         score = (
-            skill_match_score * 0.35
-            + performance_score * 0.30
-            + availability_score * 0.20
+            skill_match_score * 0.40
+            + performance_score * 0.28
+            + availability_score * 0.17
             + workload_score * 0.15
         )
 
     elif strategy == "urgency":
         score = (
-            availability_score * 0.30
-            + workload_score * 0.25
-            + skill_match_score * 0.30
+            availability_score * 0.32
+            + workload_score * 0.24
+            + skill_match_score * 0.29
             + performance_score * 0.15
         )
         if task.priority in {"high", "critical"} and availability_score >= 65:
-            score += 5
+            score += 4
 
     elif strategy == "learning":
         if skill_match["required_count"] == 0:
             learning_fit = 70
         elif skill_match_score >= 85:
-            learning_fit = 65
+            learning_fit = 62
         elif skill_match_score >= 60:
-            learning_fit = 90
+            learning_fit = 88
         elif skill_match_score >= 40 and task.complexity <= 3:
-            learning_fit = 80
+            learning_fit = 82
         else:
-            learning_fit = 35
+            learning_fit = 34
 
         score = (
-            availability_score * 0.20
+            availability_score * 0.22
             + workload_score * 0.20
-            + performance_score * 0.15
-            + learning_fit * 0.45
+            + performance_score * 0.16
+            + learning_fit * 0.42
         )
 
         if task.complexity >= 4 and skill_match_score < 60:
@@ -368,9 +367,9 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
 
     else:  # balance
         score = (
-            skill_match_score * 0.35
-            + workload_score * 0.25
-            + availability_score * 0.20
+            skill_match_score * 0.40
+            + workload_score * 0.22
+            + availability_score * 0.18
             + performance_score * 0.20
         )
 
@@ -382,17 +381,113 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
     return round(_clamp(score), 2), components
 
 
+def _apply_business_guardrails(
+    *,
+    task: Task,
+    strategy: str,
+    base_score: float,
+    metrics: dict,
+    skill_match: dict,
+    pool_context: dict[str, Any],
+) -> tuple[float, list[str]]:
+    adjusted = float(base_score)
+    notes: list[str] = []
+
+    required_count = int(skill_match.get("required_count", 0) or 0)
+    matching_count = int(len(skill_match.get("matching_skills", [])))
+    fit_priority = _fit_priority(skill_match)
+
+    exact_fit = fit_priority == 3
+    partial_fit = fit_priority == 2
+    no_fit = required_count > 0 and matching_count == 0
+
+    high_priority = task.priority in {"high", "critical"}
+    high_complexity = int(task.complexity or 0) >= 4
+    overloaded = metrics["current_load"] >= 90 or metrics["availability"] <= 10
+
+    if strategy == "balance":
+        if exact_fit:
+            adjusted += 8
+            notes.append("fuerte ajuste técnico frente a los requisitos")
+        elif partial_fit:
+            adjusted += 3
+        elif no_fit:
+            adjusted -= 14
+            notes.append("no cubre habilidades clave de la tarea")
+
+        if pool_context["has_exact_fit"] and not exact_fit:
+            adjusted -= 4 if partial_fit else 10
+            if partial_fit:
+                notes.append("queda por debajo de perfiles con ajuste técnico completo")
+            else:
+                notes.append("se penalizó por falta de ajuste técnico frente a otros candidatos")
+
+    elif strategy == "efficiency":
+        if exact_fit:
+            adjusted += 10
+            notes.append("ajuste técnico alto para una asignación eficiente")
+        elif partial_fit:
+            adjusted += 4
+        elif no_fit:
+            adjusted -= 18
+            notes.append("el ajuste técnico es insuficiente para priorizar eficiencia")
+
+        if pool_context["has_exact_fit"] and not exact_fit:
+            adjusted -= 5 if partial_fit else 12
+
+    elif strategy == "urgency":
+        if exact_fit:
+            adjusted += 5
+        elif partial_fit:
+            adjusted += 2
+        elif no_fit:
+            urgency_penalty = 10 if not high_priority and not high_complexity else 16
+            adjusted -= urgency_penalty
+            notes.append("en urgencia también se exige un mínimo de ajuste técnico")
+
+        if overloaded:
+            adjusted -= 4
+            notes.append("la carga actual reduce margen de respuesta inmediata")
+
+    elif strategy == "learning":
+        if exact_fit:
+            adjusted += 2
+        elif partial_fit:
+            adjusted += 6 if int(task.complexity or 0) <= 3 else 3
+            notes.append("tiene base técnica suficiente para crecer con acompañamiento")
+        elif no_fit:
+            learning_penalty = 8 if int(task.complexity or 0) <= 2 else 14
+            adjusted -= learning_penalty
+            notes.append("la curva de aprendizaje sería alta para esta tarea")
+
+    if high_priority and no_fit:
+        adjusted -= 6
+
+    if high_complexity and no_fit:
+        adjusted -= 6
+
+    if metrics["availability"] <= 0 and required_count > 0:
+        adjusted -= 3
+
+    return round(_clamp(adjusted), 2), notes
+
+
 def calculate_risk(task: Task, metrics: dict, skill_match: dict, strategy: str):
+    required_count = int(skill_match.get("required_count", 0) or 0)
+    matching_count = int(len(skill_match.get("matching_skills", [])))
+
     if task.priority == "critical" and metrics["current_load"] > 80:
         return "high"
-    if skill_match["required_count"] > 0 and skill_match["score"] < 40 and task.complexity >= 4:
+    if required_count > 0 and matching_count == 0 and task.complexity >= 3:
+        return "high"
+    if required_count > 0 and skill_match["score"] < 40 and task.complexity >= 4:
         return "high"
     if metrics["availability"] < 25:
         return "high"
 
     if strategy == "learning" and task.complexity >= 4 and skill_match["score"] < 70:
         return "medium"
-    if skill_match["required_count"] > 0 and skill_match["score"] < 65:
+    if required_count > 0 and skill_match["score"] < 65:
         return "medium"
     if metrics["current_load"] > 60 or metrics["availability"] < 45:
         return "medium"
@@ -402,48 +497,14 @@ def calculate_risk(task: Task, metrics: dict, skill_match: dict, strategy: str):
     return "low"
 
 
-def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str):
+def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str, extra_notes: list[str] | None = None):
     parts: list[str] = []
 
-    exact_matches = skill_match.get("exact_matches", 0)
-    alias_matches = skill_match.get("alias_matches", 0)
-    category_matches = skill_match.get("category_matches", 0)
-
-    exact_skill_names = [
-        item["required_skill_name"]
-        for item in skill_match.get("matched_details", [])
-        if item.get("match_type") == "exact"
-    ]
-    alias_skill_names = [
-        item["required_skill_name"]
-        for item in skill_match.get("matched_details", [])
-        if item.get("match_type") == "alias"
-    ]
-    category_skill_names = [
-        item["required_skill_name"]
-        for item in skill_match.get("matched_details", [])
-        if item.get("match_type") == "category"
-    ]
-
     if skill_match["required_count"] > 0:
-        if exact_matches > 0:
+        if skill_match["matching_skills"]:
             parts.append(
-                "coincidencia exacta con habilidades requeridas: "
-                + ", ".join(exact_skill_names[:3])
+                "coincidencia con habilidades requeridas: " + ", ".join(skill_match["matching_skills"][:3])
             )
-
-        if alias_matches > 0:
-            parts.append(
-                "coincidencia por alias o equivalencia en: "
-                + ", ".join(alias_skill_names[:3])
-            )
-
-        if category_matches > 0:
-            parts.append(
-                "coincidencia por categoría relacionada en: "
-                + ", ".join(category_skill_names[:3])
-            )
-
         if skill_match["missing_skills"]:
             parts.append(
                 "brechas detectadas en: " + ", ".join(skill_match["missing_skills"][:2])
@@ -473,6 +534,9 @@ def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str):
         parts.append("la estrategia evalúa potencial de aprendizaje sin perder viabilidad")
     else:
         parts.append("la estrategia busca equilibrio entre capacidad, habilidades y desempeño")
+
+    if extra_notes:
+        parts.extend(extra_notes[:2])
 
     return "Se recomienda porque presenta " + "; ".join(parts) + "."
 
@@ -525,10 +589,25 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
         return None
 
     metrics = calculate_member_metrics(db, user, project_membership)
-    skill_match = calculate_skill_match(db, task, user)
+    skill_match = calculate_skill_match(task, user)
 
     chosen_strategy = strategy if strategy in ALLOWED_STRATEGIES else "balance"
     calculated_score, calculated_components = calculate_score(task, metrics, skill_match, chosen_strategy)
+
+    pool_context = {
+        "has_exact_fit": False,
+        "has_partial_fit": False,
+        "best_exact_score": None,
+    }
+    adjusted_score, guardrail_notes = _apply_business_guardrails(
+        task=task,
+        strategy=chosen_strategy,
+        base_score=calculated_score,
+        metrics=metrics,
+        skill_match=skill_match,
+        pool_context=pool_context,
+    )
+
     calculated_risk = calculate_risk(task, metrics, skill_match, chosen_strategy)
 
     recommendation_query = db.query(Recommendation).filter(
@@ -566,18 +645,38 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
         "availability_snapshot": float(metrics["availability"]),
         "active_tasks_snapshot": int(metrics["active_tasks"]),
         "required_skills_count": int(skill_match["required_count"]),
-        "matching_skills_count": int(skill_match["matched_count"]),
-        "matching_ratio": float(skill_match["matching_ratio"]),
+        "matching_skills_count": int(len(skill_match["matching_skills"])),
         "estimated_hours_snapshot": float(task.estimated_hours) if task.estimated_hours is not None else None,
         "priority_snapshot": task.priority,
         "complexity_snapshot": task.complexity,
         "recommendation_score": (
             float(latest_recommendation.score)
             if latest_recommendation and latest_recommendation.score is not None
-            else float(calculated_score)
+            else float(adjusted_score)
         ),
         "risk_level": latest_recommendation.risk_level if latest_recommendation else calculated_risk,
+        "guardrail_notes": guardrail_notes,
     }
+
+
+def _compute_model_weight() -> float:
+    status = get_baseline_status()
+    metadata = status.get("metadata") or {}
+    metrics = metadata.get("metrics") or {}
+
+    accuracy = _to_float(metrics.get("accuracy"), 0.0)
+    f1 = _to_float(metrics.get("f1"), 0.0)
+    roc_auc = _to_float(metrics.get("roc_auc"), 0.0)
+
+    readiness_score = (accuracy * 0.20) + (f1 * 0.35) + (roc_auc * 0.45)
+
+    if readiness_score >= 0.82:
+        return 0.32
+    if readiness_score >= 0.75:
+        return 0.28
+    if readiness_score >= 0.68:
+        return 0.22
+    return 0.18
 
 
 def _build_hybrid_evaluation(
@@ -592,12 +691,12 @@ def _build_hybrid_evaluation(
     mode: str,
 ):
     required_skills_count = int(skill_match.get("required_count", 0) or 0)
-    matching_skills_count = int(skill_match.get("matched_count", 0) or 0)
-    matching_ratio = float(skill_match.get("matching_ratio", 0.0) or 0.0)
-    skill_match_score = float(components["skill_match_score"])
-    exact_matches = int(skill_match.get("exact_matches", 0) or 0)
-    alias_matches = int(skill_match.get("alias_matches", 0) or 0)
-    category_matches = int(skill_match.get("category_matches", 0) or 0)
+    matching_skills_count = int(len(skill_match.get("matching_skills", [])))
+    matching_ratio = (
+        round((matching_skills_count / required_skills_count), 4)
+        if required_skills_count > 0
+        else 0.0
+    )
 
     if mode == "heuristic":
         return {
@@ -637,37 +736,22 @@ def _build_hybrid_evaluation(
             "model_used": False,
         }
 
-    ml_signal_score = _probability_to_ml_signal(ml_success_probability)
-    hybrid_score_raw = (
-        float(heuristic_score) * HEURISTIC_WEIGHT
-        + float(ml_signal_score) * BASELINE_WEIGHT
+    if required_skills_count > 0 and matching_skills_count == 0:
+        if strategy in {"balance", "efficiency"}:
+            ml_success_probability = min(float(ml_success_probability), 0.35)
+        elif strategy == "urgency" and task.priority in {"high", "critical"}:
+            ml_success_probability = min(float(ml_success_probability), 0.45)
+        elif strategy == "learning" and int(task.complexity or 0) >= 4:
+            ml_success_probability = min(float(ml_success_probability), 0.35)
+
+    baseline_weight = _compute_model_weight()
+    heuristic_weight = round(1 - baseline_weight, 2)
+
+    hybrid_score = round(
+        (float(heuristic_score) * heuristic_weight)
+        + (float(ml_success_probability) * 100 * baseline_weight),
+        2,
     )
-
-    # Guardrails para que el modelo no destruya una buena coincidencia técnica
-    if required_skills_count > 0:
-        # Match fuerte: no dejar caer demasiado el score
-        if matching_ratio >= 0.99 and skill_match_score >= 90:
-            hybrid_score_raw = max(hybrid_score_raw, float(heuristic_score) * 0.93)
-
-        # Match parcial razonable: proteger algo del score
-        elif matching_ratio >= 0.50 and skill_match_score >= 50:
-            hybrid_score_raw = max(hybrid_score_raw, float(heuristic_score) * 0.88)
-
-        # Sin match real: no dejar que el ML impulse demasiado
-        elif matching_ratio == 0 and skill_match_score == 0:
-            hybrid_score_raw = min(hybrid_score_raw, float(heuristic_score) * 0.97)
-
-    # Ajustes suaves por tipo de coincidencia
-    if exact_matches > 0:
-        hybrid_score_raw += min(exact_matches * 1.5, 3.0)
-
-    if alias_matches > 0:
-        hybrid_score_raw += min(alias_matches * 0.8, 1.6)
-
-    if category_matches > 0:
-        hybrid_score_raw += min(category_matches * 0.4, 0.8)
-
-    hybrid_score = round(_clamp(hybrid_score_raw), 2)
 
     return {
         "final_score": hybrid_score,
@@ -679,33 +763,65 @@ def _build_hybrid_evaluation(
 
 
 def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
-    ranked_items: list[dict[str, Any]] = []
+    raw_items: list[dict[str, Any]] = []
     baseline_model = load_baseline_model() if mode == "hybrid" else None
 
     for member, membership in get_eligible_project_members(task):
         metrics = calculate_member_metrics(db, member, membership)
-        skill_match = calculate_skill_match(db, task, member)
-        heuristic_score, components = calculate_score(task, metrics, skill_match, strategy)
-        risk_level = calculate_risk(task, metrics, skill_match, strategy)
-        reason = build_reason(task, metrics, skill_match, strategy)
+        skill_match = calculate_skill_match(task, member)
+        base_score, components = calculate_score(task, metrics, skill_match, strategy)
+
+        raw_items.append(
+            {
+                "member": member,
+                "membership": membership,
+                "metrics": metrics,
+                "skill_match": skill_match,
+                "components": components,
+                "base_score": base_score,
+                "fit_priority": _fit_priority(skill_match),
+            }
+        )
+
+    pool_context = _build_pool_context(raw_items)
+
+    ranked_items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        adjusted_score, guardrail_notes = _apply_business_guardrails(
+            task=task,
+            strategy=strategy,
+            base_score=raw["base_score"],
+            metrics=raw["metrics"],
+            skill_match=raw["skill_match"],
+            pool_context=pool_context,
+        )
+
+        risk_level = calculate_risk(task, raw["metrics"], raw["skill_match"], strategy)
+        reason = build_reason(
+            task,
+            raw["metrics"],
+            raw["skill_match"],
+            strategy,
+            guardrail_notes,
+        )
 
         hybrid_eval = _build_hybrid_evaluation(
             task=task,
             strategy=strategy,
-            heuristic_score=heuristic_score,
-            metrics=metrics,
-            skill_match=skill_match,
-            components=components,
+            heuristic_score=adjusted_score,
+            metrics=raw["metrics"],
+            skill_match=raw["skill_match"],
+            components=raw["components"],
             model=baseline_model,
             mode=mode,
         )
 
         ranked_items.append(
             {
-                "member": member,
-                "membership": membership,
-                "metrics": metrics,
-                "skill_match": skill_match,
+                "member": raw["member"],
+                "membership": raw["membership"],
+                "metrics": raw["metrics"],
+                "skill_match": raw["skill_match"],
                 "score": hybrid_eval["final_score"],
                 "heuristic_score": hybrid_eval["heuristic_score"],
                 "ml_success_probability": hybrid_eval["ml_success_probability"],
@@ -713,11 +829,21 @@ def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
                 "model_used": hybrid_eval["model_used"],
                 "risk_level": risk_level,
                 "reason": reason,
-                **components,
+                "fit_priority": raw["fit_priority"],
+                **raw["components"],
             }
         )
 
-    ranked_items.sort(key=lambda item: item["score"], reverse=True)
+    ranked_items.sort(
+        key=lambda item: (
+            item["score"],
+            item["fit_priority"],
+            item["skill_match_score"],
+            item["availability_score"],
+            -item["metrics"]["current_load"],
+        ),
+        reverse=True,
+    )
     return ranked_items
 
 

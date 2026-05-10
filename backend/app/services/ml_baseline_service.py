@@ -126,6 +126,20 @@ def _get_feature_sets(training_variant: str) -> tuple[list[str], list[str]]:
     return NUMERIC_FEATURES_FULL, CATEGORICAL_FEATURES_FULL
 
 
+def _probability_confidence_band(probability: float | None) -> str:
+    if probability is None:
+        return "sin_modelo"
+
+    prob = max(0.0, min(1.0, float(probability)))
+    distance = abs(prob - 0.5)
+
+    if distance >= 0.30:
+        return "alta"
+    if distance >= 0.15:
+        return "media"
+    return "baja"
+
+
 def fetch_training_dataframe(db: Session, project_id: int | None = None) -> pd.DataFrame:
     query = (
         db.query(TaskAssignmentHistory, TaskOutcome, Task)
@@ -400,6 +414,10 @@ def _train_pipeline_from_dataframe(
         "roc_auc": round(float(roc_auc_score(y_test, y_prob)), 4),
     }
 
+    negative_count = int(label_counts.get(0, 0))
+    positive_count = int(label_counts.get(1, 0))
+    minority_ratio = round((min(negative_count, positive_count) / max(len(df), 1)) * 100, 2)
+
     _ensure_artifacts_dir()
     joblib.dump(pipeline, MODEL_PATH)
 
@@ -414,9 +432,28 @@ def _train_pipeline_from_dataframe(
         "train_rows": int(len(X_train)),
         "test_rows": int(len(X_test)),
         "label_distribution": {str(k): int(v) for k, v in label_counts.items()},
+        "class_balance": {
+            "negative_count": negative_count,
+            "positive_count": positive_count,
+            "minority_ratio_percent": minority_ratio,
+        },
         "test_size": test_size,
         "random_state": random_state,
         "metrics": metrics,
+        "model_readiness": {
+            "confidence_band": (
+                "alta"
+                if metrics["roc_auc"] >= 0.78 and metrics["f1"] >= 0.60
+                else "media"
+                if metrics["roc_auc"] >= 0.70 and metrics["f1"] >= 0.50
+                else "baja"
+            ),
+            "recommended_usage": (
+                "apoyo_a_decision"
+                if metrics["roc_auc"] >= 0.70
+                else "solo_como_senal_complementaria"
+            ),
+        },
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,
         "top_coefficients": _extract_feature_importance(pipeline),
@@ -537,6 +574,7 @@ def preview_predictions(
 
     records = []
     for _, row in preview_df.sort_values("assignment_decision_id", ascending=False).iterrows():
+        prob = round(float(row["predicted_success_probability"]), 4)
         records.append(
             {
                 "assignment_decision_id": int(row["assignment_decision_id"]),
@@ -550,7 +588,8 @@ def preview_predictions(
                 "availability_snapshot": round(float(row["availability_snapshot"] or 0), 2),
                 "actual_success_label": int(row["success_label"]),
                 "predicted_label": int(row["predicted_label"]),
-                "predicted_success_probability": round(float(row["predicted_success_probability"]), 4),
+                "predicted_success_probability": prob,
+                "prediction_confidence": _probability_confidence_band(prob),
             }
         )
 

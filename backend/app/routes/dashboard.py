@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
-from typing import Dict, List
+from typing import Dict, List, Optional, Set
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
 from app.models import Project, ProjectMember, Task, TaskAssignmentHistory, User
+from app.routes.auth import get_current_user, has_any_role
 from app.schemas import (
     DashboardOverviewResponse,
     DashboardProjectItem,
@@ -42,34 +44,85 @@ def _to_float(value, default: float = 0.0) -> float:
         return default
 
 
-def _build_member_metrics(db: Session) -> List[DashboardTeamMemberMetricItem]:
-    memberships = (
-        db.query(ProjectMember)
-        .options(
-            joinedload(ProjectMember.user)
-            .joinedload(User.global_role),
-            joinedload(ProjectMember.user)
-            .joinedload(User.project_memberships),
-        )
+def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
+    if has_any_role(current_user, "admin"):
+        rows = db.query(Project.id).all()
+        return {int(project_id) for (project_id,) in rows}
+
+    membership_rows = (
+        db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.id)
         .all()
     )
+    project_ids = {int(project_id) for (project_id,) in membership_rows}
+
+    if has_any_role(current_user, "leader"):
+        created_rows = (
+            db.query(Project.id)
+            .filter(Project.created_by == current_user.id)
+            .all()
+        )
+        project_ids.update(int(project_id) for (project_id,) in created_rows)
+
+    return project_ids
+
+
+def _build_member_metrics(
+    db: Session,
+    *,
+    current_user: User,
+    accessible_project_ids: Optional[Set[int]] = None,
+    only_current_user: bool = False,
+) -> List[DashboardTeamMemberMetricItem]:
+    memberships_query = (
+        db.query(ProjectMember)
+        .options(
+            joinedload(ProjectMember.user).joinedload(User.global_role),
+            joinedload(ProjectMember.user).joinedload(User.project_memberships),
+        )
+    )
+
+    if accessible_project_ids is not None:
+        if not accessible_project_ids:
+            return []
+        memberships_query = memberships_query.filter(
+            ProjectMember.project_id.in_(accessible_project_ids)
+        )
+
+    if only_current_user:
+        memberships_query = memberships_query.filter(ProjectMember.user_id == current_user.id)
+
+    memberships = memberships_query.all()
 
     unique_users: Dict[int, User] = {}
     for membership in memberships:
         if membership.user and membership.user.id not in unique_users:
             unique_users[membership.user.id] = membership.user
 
+    if only_current_user and current_user.id not in unique_users:
+        user = (
+            db.query(User)
+            .options(
+                joinedload(User.global_role),
+                joinedload(User.project_memberships),
+            )
+            .filter(User.id == current_user.id)
+            .first()
+        )
+        if user:
+            unique_users[user.id] = user
+
     if not unique_users:
         return []
 
     member_ids = list(unique_users.keys())
 
-    assigned_tasks = (
-        db.query(Task)
-        .filter(Task.assigned_to.in_(member_ids))
-        .order_by(Task.id.asc())
-        .all()
-    )
+    assigned_tasks_query = db.query(Task).filter(Task.assigned_to.in_(member_ids))
+
+    if accessible_project_ids is not None and accessible_project_ids:
+        assigned_tasks_query = assigned_tasks_query.filter(Task.project_id.in_(accessible_project_ids))
+
+    assigned_tasks = assigned_tasks_query.order_by(Task.id.asc()).all()
 
     tasks_by_user: Dict[int, List[Task]] = defaultdict(list)
     for task in assigned_tasks:
@@ -89,10 +142,16 @@ def _build_member_metrics(db: Session) -> List[DashboardTeamMemberMetricItem]:
 
         completion_rate = round((completed_count / total_tasks) * 100, 2) if total_tasks > 0 else 0.0
 
+        relevant_memberships = user.project_memberships or []
+        if accessible_project_ids is not None:
+            relevant_memberships = [
+                item for item in relevant_memberships if item.project_id in accessible_project_ids
+            ]
+
         latest_membership = None
-        if user.project_memberships:
+        if relevant_memberships:
             latest_membership = sorted(
-                user.project_memberships,
+                relevant_memberships,
                 key=lambda item: item.joined_at,
                 reverse=True,
             )[0]
@@ -124,16 +183,53 @@ def _build_member_metrics(db: Session) -> List[DashboardTeamMemberMetricItem]:
 
 
 @router.get("/overview", response_model=DashboardOverviewResponse)
-def get_dashboard_overview(db: Session = Depends(get_db)):
-    projects = (
+def get_dashboard_overview(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    accessible_project_ids = _get_accessible_project_ids(db, current_user)
+    today = date.today()
+
+    projects_query = (
         db.query(Project)
         .options(joinedload(Project.members))
         .order_by(Project.id.desc())
-        .all()
     )
 
-    tasks = db.query(Task).order_by(Task.id.asc()).all()
-    today = date.today()
+    tasks_query = db.query(Task).order_by(Task.id.asc())
+
+    if has_any_role(current_user, "admin"):
+        member_metrics = _build_member_metrics(db, current_user=current_user)
+    elif has_any_role(current_user, "leader"):
+        if accessible_project_ids:
+            projects_query = projects_query.filter(Project.id.in_(accessible_project_ids))
+            tasks_query = tasks_query.filter(Task.project_id.in_(accessible_project_ids))
+        else:
+            projects_query = projects_query.filter(False)
+            tasks_query = tasks_query.filter(False)
+
+        member_metrics = _build_member_metrics(
+            db,
+            current_user=current_user,
+            accessible_project_ids=accessible_project_ids,
+        )
+    else:
+        if accessible_project_ids:
+            projects_query = projects_query.filter(Project.id.in_(accessible_project_ids))
+        else:
+            projects_query = projects_query.filter(False)
+
+        tasks_query = tasks_query.filter(Task.assigned_to == current_user.id)
+
+        member_metrics = _build_member_metrics(
+            db,
+            current_user=current_user,
+            accessible_project_ids=accessible_project_ids,
+            only_current_user=True,
+        )
+
+    projects = projects_query.all()
+    tasks = tasks_query.all()
 
     pending_tasks = sum(1 for task in tasks if task.status == "pending")
     in_progress_tasks = sum(1 for task in tasks if task.status == "in_progress")
@@ -144,7 +240,6 @@ def get_dashboard_overview(db: Session = Depends(get_db)):
         if task.due_date is not None and task.due_date < today and task.status != "done"
     )
 
-    member_metrics = _build_member_metrics(db)
     team_load_average = (
         round(sum(item.current_load for item in member_metrics) / len(member_metrics), 2)
         if member_metrics
@@ -167,22 +262,35 @@ def get_dashboard_overview(db: Session = Depends(get_db)):
         for project in projects[:5]
     ]
 
-    history = (
+    history_query = (
         db.query(TaskAssignmentHistory)
         .options(
             joinedload(TaskAssignmentHistory.task),
             joinedload(TaskAssignmentHistory.assigned_user),
         )
         .order_by(TaskAssignmentHistory.created_at.desc())
-        .all()
     )
+
+    if has_any_role(current_user, "leader"):
+        if accessible_project_ids:
+            history_query = history_query.join(TaskAssignmentHistory.task).filter(
+                Task.project_id.in_(accessible_project_ids)
+            )
+        else:
+            history_query = history_query.filter(False)
+    elif has_any_role(current_user, "member"):
+        history_query = history_query.join(TaskAssignmentHistory.task).filter(
+            Task.assigned_to == current_user.id
+        )
+
+    history = history_query.all()
 
     recent_recommendations: List[DashboardRecommendationItem] = []
     for item in history:
         if not item.task or not item.assigned_user:
             continue
 
-        if item.source not in {"recommended", "hybrid"}:
+        if item.source not in {"recommended", "hybrid", "heuristic"}:
             continue
 
         recent_recommendations.append(
@@ -216,8 +324,35 @@ def get_dashboard_overview(db: Session = Depends(get_db)):
 
 
 @router.get("/team-metrics", response_model=DashboardTeamMetricsResponse)
-def get_team_metrics(db: Session = Depends(get_db)):
-    tasks = db.query(Task).order_by(Task.id.asc()).all()
+def get_team_metrics(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver métricas de equipo",
+        )
+
+    accessible_project_ids = _get_accessible_project_ids(db, current_user)
+
+    tasks_query = db.query(Task).order_by(Task.id.asc())
+
+    if has_any_role(current_user, "leader"):
+        if accessible_project_ids:
+            tasks_query = tasks_query.filter(Task.project_id.in_(accessible_project_ids))
+        else:
+            tasks_query = tasks_query.filter(False)
+
+        member_metrics = _build_member_metrics(
+            db,
+            current_user=current_user,
+            accessible_project_ids=accessible_project_ids,
+        )
+    else:
+        member_metrics = _build_member_metrics(db, current_user=current_user)
+
+    tasks = tasks_query.all()
     today = date.today()
 
     completed_tasks = sum(1 for task in tasks if task.status == "done")
@@ -226,8 +361,6 @@ def get_team_metrics(db: Session = Depends(get_db)):
         for task in tasks
         if task.due_date is not None and task.due_date < today and task.status != "done"
     )
-
-    member_metrics = _build_member_metrics(db)
 
     average_completion_rate = (
         round(sum(item.completion_rate for item in member_metrics) / len(member_metrics), 2)

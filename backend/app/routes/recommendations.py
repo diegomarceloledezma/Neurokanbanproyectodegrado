@@ -1,7 +1,11 @@
+from typing import Set
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.models import Project, ProjectMember, Task, User
+from app.routes.auth import get_current_user, has_any_role
 from app.schemas import (
     TaskInsightResponse,
     TaskRecommendationResponse,
@@ -19,13 +23,48 @@ from app.services.task_insights_service import build_task_insight_response
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
 
-@router.get("/tasks/{task_id}", response_model=TaskRecommendationResponse)
-def get_task_recommendations(
-    task_id: int,
-    strategy: str = Query(default="balance"),
-    mode: str = Query(default="hybrid"),
-    db: Session = Depends(get_db),
-):
+def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
+    if has_any_role(current_user, "admin"):
+        rows = db.query(Project.id).all()
+        return {int(project_id) for (project_id,) in rows}
+
+    membership_rows = (
+        db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.id)
+        .all()
+    )
+    project_ids = {int(project_id) for (project_id,) in membership_rows}
+
+    if has_any_role(current_user, "leader"):
+        created_rows = (
+            db.query(Project.id)
+            .filter(Project.created_by == current_user.id)
+            .all()
+        )
+        project_ids.update(int(project_id) for (project_id,) in created_rows)
+
+    return project_ids
+
+
+def _validate_task_access(db: Session, task: Task, current_user: User) -> None:
+    if has_any_role(current_user, "admin"):
+        return
+
+    if not has_any_role(current_user, "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para usar recomendaciones inteligentes",
+        )
+
+    accessible_project_ids = _get_accessible_project_ids(db, current_user)
+    if task.project_id not in accessible_project_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para acceder a esa tarea",
+        )
+
+
+def _validate_strategy_and_mode(strategy: str, mode: str) -> None:
     if strategy not in ALLOWED_STRATEGIES:
         raise HTTPException(
             status_code=400,
@@ -38,9 +77,22 @@ def get_task_recommendations(
             detail=f"Modo inválido. Usa uno de: {', '.join(sorted(ALLOWED_MODES))}",
         )
 
+
+@router.get("/tasks/{task_id}", response_model=TaskRecommendationResponse)
+def get_task_recommendations(
+    task_id: int,
+    strategy: str = Query(default="balance"),
+    mode: str = Query(default="hybrid"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _validate_strategy_and_mode(strategy, mode)
+
     task = load_task_or_none(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    _validate_task_access(db, task, current_user)
 
     response = build_task_recommendations_response(db, task, strategy, mode)
     if not response:
@@ -58,22 +110,15 @@ def get_task_simulation(
     strategy: str = Query(default="balance"),
     mode: str = Query(default="hybrid"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    if strategy not in ALLOWED_STRATEGIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Estrategia inválida. Usa una de: {', '.join(sorted(ALLOWED_STRATEGIES))}",
-        )
-
-    if mode not in ALLOWED_MODES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Modo inválido. Usa uno de: {', '.join(sorted(ALLOWED_MODES))}",
-        )
+    _validate_strategy_and_mode(strategy, mode)
 
     task = load_task_or_none(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    _validate_task_access(db, task, current_user)
 
     response = build_task_simulation_response(db, task, strategy, mode)
     if not response:
@@ -86,9 +131,15 @@ def get_task_simulation(
 
 
 @router.get("/tasks/{task_id}/insights", response_model=TaskInsightResponse)
-def get_task_insights(task_id: int, db: Session = Depends(get_db)):
+def get_task_insights(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     task = load_task_or_none(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+    _validate_task_access(db, task, current_user)
 
     return build_task_insight_response(task)

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter
-from typing import Optional
+from typing import Optional, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.models import Task, TaskAssignmentHistory, TaskOutcome, User, UserSkill
+from app.models import Project, ProjectMember, Task, TaskAssignmentHistory, TaskOutcome, User, UserSkill
+from app.routes.auth import get_current_user, has_any_role
 from app.services.synthetic_history_generator import (
     compute_success_label,
     compute_success_score,
@@ -24,6 +25,46 @@ def _to_float(value, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
+    if has_any_role(current_user, "admin"):
+        rows = db.query(Project.id).all()
+        return {int(project_id) for (project_id,) in rows}
+
+    membership_rows = (
+        db.query(ProjectMember.project_id)
+        .filter(ProjectMember.user_id == current_user.id)
+        .all()
+    )
+    project_ids = {int(project_id) for (project_id,) in membership_rows}
+
+    if has_any_role(current_user, "leader"):
+        created_rows = (
+            db.query(Project.id)
+            .filter(Project.created_by == current_user.id)
+            .all()
+        )
+        project_ids.update(int(project_id) for (project_id,) in created_rows)
+
+    return project_ids
+
+
+def _validate_project_access(
+    db: Session,
+    current_user: User,
+    project_id: Optional[int],
+) -> Set[int]:
+    accessible_project_ids = _get_accessible_project_ids(db, current_user)
+
+    if project_id is not None and not has_any_role(current_user, "admin"):
+        if project_id not in accessible_project_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para acceder a ese proyecto",
+            )
+
+    return accessible_project_ids
 
 
 def _build_training_row(decision: TaskAssignmentHistory):
@@ -71,7 +112,13 @@ def _build_training_row(decision: TaskAssignmentHistory):
     }
 
 
-def _fetch_decisions(db: Session, project_id: Optional[int] = None):
+def _fetch_decisions(
+    db: Session,
+    current_user: User,
+    project_id: Optional[int] = None,
+):
+    accessible_project_ids = _validate_project_access(db, current_user, project_id)
+
     query = (
         db.query(TaskAssignmentHistory)
         .options(
@@ -80,8 +127,15 @@ def _fetch_decisions(db: Session, project_id: Optional[int] = None):
         .join(Task, Task.id == TaskAssignmentHistory.task_id)
         .order_by(TaskAssignmentHistory.id.asc())
     )
+
     if project_id is not None:
         query = query.filter(Task.project_id == project_id)
+    elif has_any_role(current_user, "leader"):
+        if accessible_project_ids:
+            query = query.filter(Task.project_id.in_(accessible_project_ids))
+        else:
+            query = query.filter(False)
+
     return query.all()
 
 
@@ -90,8 +144,15 @@ def get_training_dataset(
     project_id: Optional[int] = Query(default=None),
     limit: Optional[int] = Query(default=None, ge=1),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    decisions = _fetch_decisions(db, project_id)
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para consultar el dataset de entrenamiento",
+        )
+
+    decisions = _fetch_decisions(db, current_user, project_id)
     rows = []
     for decision in decisions:
         row = _build_training_row(decision)
@@ -108,8 +169,15 @@ def get_training_dataset(
 def get_training_dataset_summary(
     project_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    decisions = _fetch_decisions(db, project_id)
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para consultar el resumen del dataset",
+        )
+
+    decisions = _fetch_decisions(db, current_user, project_id)
     rows = []
     for decision in decisions:
         row = _build_training_row(decision)
@@ -133,7 +201,9 @@ def get_training_dataset_summary(
 
     source_distribution = dict(Counter(row["source"] for row in rows))
     strategy_distribution = dict(Counter(row["strategy"] for row in rows if row["strategy"]))
-    priority_distribution = dict(Counter(row["priority_snapshot"] for row in rows if row["priority_snapshot"]))
+    priority_distribution = dict(
+        Counter(row["priority_snapshot"] for row in rows if row["priority_snapshot"])
+    )
 
     numeric_fields = [
         "recommendation_score",
@@ -178,7 +248,14 @@ def generate_synthetic_history_endpoint(
     seed: int = Query(default=42),
     create_dataset_project: bool = Query(default=True),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede generar histórico sintético",
+        )
+
     try:
         result = generate_synthetic_history(
             db,
@@ -213,12 +290,21 @@ def generate_synthetic_history_endpoint(
 def backfill_assignment_snapshots(
     project_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede recalcular snapshots",
+        )
+
     decisions = (
         db.query(TaskAssignmentHistory)
         .options(
             joinedload(TaskAssignmentHistory.task).joinedload(Task.required_skills),
-            joinedload(TaskAssignmentHistory.assigned_user).joinedload(User.user_skills).joinedload(UserSkill.skill),
+            joinedload(TaskAssignmentHistory.assigned_user)
+            .joinedload(User.user_skills)
+            .joinedload(UserSkill.skill),
         )
         .join(Task, Task.id == TaskAssignmentHistory.task_id)
     )

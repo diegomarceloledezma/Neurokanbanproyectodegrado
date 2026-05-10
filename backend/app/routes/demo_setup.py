@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.models import User
+from app.routes.auth import get_current_user, has_any_role
 from app.services.demo_setup_service import create_demo_scenario
 
 router = APIRouter(prefix="/demo-setup", tags=["Demo Setup"])
@@ -12,7 +14,14 @@ def generate_demo_scenario(
     source_project_id: int = Query(default=1, ge=1),
     seed: int = Query(default=42),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede generar escenarios demo",
+        )
+
     try:
         result = create_demo_scenario(
             db,

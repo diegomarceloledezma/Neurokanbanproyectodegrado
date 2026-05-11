@@ -49,6 +49,33 @@ def _clamp(value: float, low: float = 0.0, high: float = 100.0) -> float:
     return max(low, min(value, high))
 
 
+def _neutral_rate() -> float:
+    return 50.0
+
+
+def _neutral_quality_index() -> float:
+    return 60.0
+
+
+def _compute_outcome_success_score(outcome: TaskOutcome) -> float:
+    if outcome.success_score is not None:
+        return round(float(outcome.success_score), 2)
+
+    score = 0.0
+    if outcome.finished_on_time:
+        score += 35
+    else:
+        score += max(0.0, 15 - _to_float(outcome.delay_hours) * 1.8)
+
+    score += int(outcome.quality_score or 0) * 12
+    score += -8 if bool(outcome.had_rework) else 10
+    return round(_clamp(score), 2)
+
+
+def _compute_success_label(success_score: float) -> int:
+    return 1 if float(success_score) >= 65.0 else 0
+
+
 def _is_sqlite(db: Session) -> bool:
     bind = db.get_bind()
     return bind is not None and bind.dialect.name == "sqlite"
@@ -110,7 +137,105 @@ def get_eligible_project_members(task: Task):
     return eligible
 
 
-def calculate_member_metrics(db: Session, member: User, project_membership: ProjectMember):
+def _build_history_profile(db: Session, member: User, reference_task: Task):
+    outcome_rows = (
+        db.query(Task, TaskOutcome)
+        .join(TaskOutcome, TaskOutcome.task_id == Task.id)
+        .filter(Task.assigned_to == member.id)
+        .order_by(TaskOutcome.completed_at.asc().nullslast(), TaskOutcome.id.asc())
+        .all()
+    )
+
+    count = len(outcome_rows)
+    if count == 0:
+        return {
+            "historical_tasks_with_outcome": 0,
+            "historical_success_rate": _neutral_rate(),
+            "historical_avg_success_score": 60.0,
+            "historical_on_time_rate": _neutral_rate(),
+            "historical_quality_index": _neutral_quality_index(),
+            "historical_no_rework_rate": _neutral_rate(),
+            "same_task_type_history_count": 0,
+            "same_task_type_success_rate": _neutral_rate(),
+            "same_priority_history_count": 0,
+            "same_priority_success_rate": _neutral_rate(),
+            "recent_5_success_rate": _neutral_rate(),
+        }
+
+    success_scores: list[float] = []
+    success_labels: list[int] = []
+    on_time_values: list[int] = []
+    quality_values: list[float] = []
+    no_rework_values: list[int] = []
+
+    same_task_type_labels: list[int] = []
+    same_priority_labels: list[int] = []
+
+    for past_task, outcome in outcome_rows:
+        success_score = _compute_outcome_success_score(outcome)
+        success_label = _compute_success_label(success_score)
+
+        success_scores.append(success_score)
+        success_labels.append(success_label)
+
+        if outcome.finished_on_time is not None:
+            on_time_values.append(1 if outcome.finished_on_time else 0)
+
+        if outcome.quality_score is not None:
+            quality_values.append(float(outcome.quality_score))
+
+        no_rework_values.append(0 if bool(outcome.had_rework) else 1)
+
+        if (past_task.task_type or "other") == (reference_task.task_type or "other"):
+            same_task_type_labels.append(success_label)
+
+        if (past_task.priority or "medium") == (reference_task.priority or "medium"):
+            same_priority_labels.append(success_label)
+
+    recent_labels = success_labels[-5:]
+
+    historical_success_rate = round((sum(success_labels) / len(success_labels)) * 100, 2)
+    historical_avg_success_score = round(sum(success_scores) / len(success_scores), 2)
+    historical_on_time_rate = round((sum(on_time_values) / len(on_time_values)) * 100, 2) if on_time_values else _neutral_rate()
+    historical_quality_index = round((sum(quality_values) / len(quality_values)) * 20.0, 2) if quality_values else _neutral_quality_index()
+    historical_no_rework_rate = round((sum(no_rework_values) / len(no_rework_values)) * 100, 2) if no_rework_values else _neutral_rate()
+
+    same_task_type_history_count = len(same_task_type_labels)
+    same_task_type_success_rate = (
+        round((sum(same_task_type_labels) / same_task_type_history_count) * 100, 2)
+        if same_task_type_history_count > 0
+        else historical_success_rate
+    )
+
+    same_priority_history_count = len(same_priority_labels)
+    same_priority_success_rate = (
+        round((sum(same_priority_labels) / same_priority_history_count) * 100, 2)
+        if same_priority_history_count > 0
+        else historical_success_rate
+    )
+
+    recent_5_success_rate = (
+        round((sum(recent_labels) / len(recent_labels)) * 100, 2)
+        if recent_labels
+        else historical_success_rate
+    )
+
+    return {
+        "historical_tasks_with_outcome": count,
+        "historical_success_rate": historical_success_rate,
+        "historical_avg_success_score": historical_avg_success_score,
+        "historical_on_time_rate": historical_on_time_rate,
+        "historical_quality_index": historical_quality_index,
+        "historical_no_rework_rate": historical_no_rework_rate,
+        "same_task_type_history_count": same_task_type_history_count,
+        "same_task_type_success_rate": same_task_type_success_rate,
+        "same_priority_history_count": same_priority_history_count,
+        "same_priority_success_rate": same_priority_success_rate,
+        "recent_5_success_rate": recent_5_success_rate,
+    }
+
+
+def calculate_member_metrics(db: Session, member: User, project_membership: ProjectMember, reference_task: Task):
     assigned_tasks = (
         db.query(Task)
         .filter(Task.assigned_to == member.id)
@@ -126,7 +251,6 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     completed_count = len(completed_tasks)
 
     completion_rate = round((completed_count / total_tasks) * 100, 2) if total_tasks > 0 else 0.0
-
     total_active_hours = sum(_to_float(task.estimated_hours) for task in active_tasks)
 
     capacity_hours = _to_float(project_membership.weekly_capacity_hours, 40.0) or 40.0
@@ -159,11 +283,7 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     on_time_rate = 0.0
     if on_time_rows:
         on_time_rate = round(
-            (
-                sum(1 for row in on_time_rows if row.finished_on_time)
-                / len(on_time_rows)
-            )
-            * 100,
+            (sum(1 for row in on_time_rows if row.finished_on_time) / len(on_time_rows)) * 100,
             2,
         )
 
@@ -177,11 +297,7 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     no_rework_rate = 100.0
     if rework_rows:
         no_rework_rate = round(
-            (
-                sum(1 for row in rework_rows if not row.had_rework)
-                / len(rework_rows)
-            )
-            * 100,
+            (sum(1 for row in rework_rows if not row.had_rework) / len(rework_rows)) * 100,
             2,
         )
 
@@ -190,6 +306,8 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
     for task in active_tasks:
         if task.due_date and task.due_date < today:
             overdue_active_tasks += 1
+
+    history_profile = _build_history_profile(db, member, reference_task)
 
     return {
         "active_tasks": active_count,
@@ -204,6 +322,7 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
         "on_time_rate": on_time_rate,
         "no_rework_rate": no_rework_rate,
         "overdue_active_tasks": overdue_active_tasks,
+        **history_profile,
     }
 
 
@@ -217,6 +336,7 @@ def calculate_skill_match(task: Task, member: User):
             "strong_matches": 0,
             "partial_matches": 0,
             "required_count": 0,
+            "matching_ratio": 0.0,
         }
 
     member_skills = {user_skill.skill_id: user_skill for user_skill in member.user_skills or []}
@@ -250,6 +370,7 @@ def calculate_skill_match(task: Task, member: User):
             partial_matches += 1
 
     score = round(total_score / len(required_skills), 2)
+    matching_ratio = round((len(matching_skills) / len(required_skills)), 4) if required_skills else 0.0
 
     return {
         "score": score,
@@ -258,6 +379,7 @@ def calculate_skill_match(task: Task, member: User):
         "strong_matches": strong_matches,
         "partial_matches": partial_matches,
         "required_count": len(required_skills),
+        "matching_ratio": matching_ratio,
     }
 
 
@@ -269,12 +391,18 @@ def calculate_component_scores(task: Task, metrics: dict, skill_match: dict):
     quality_component = metrics["avg_quality_score"] * 20 if metrics["avg_quality_score"] > 0 else 60
     on_time_component = metrics.get("on_time_rate", 0)
     no_rework_component = metrics.get("no_rework_rate", 100)
+    historical_success_rate = metrics.get("historical_success_rate", 50)
+    recent_5_success_rate = metrics.get("recent_5_success_rate", historical_success_rate)
+    same_task_type_success_rate = metrics.get("same_task_type_success_rate", historical_success_rate)
 
     performance_score = _clamp(
-        metrics["completion_rate"] * 0.40
-        + quality_component * 0.25
-        + on_time_component * 0.20
-        + no_rework_component * 0.15
+        metrics["completion_rate"] * 0.20
+        + quality_component * 0.18
+        + on_time_component * 0.18
+        + no_rework_component * 0.14
+        + historical_success_rate * 0.16
+        + recent_5_success_rate * 0.08
+        + same_task_type_success_rate * 0.06
     )
 
     skill_match_score = _clamp(skill_match["score"])
@@ -327,18 +455,18 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
 
     if strategy == "efficiency":
         score = (
-            skill_match_score * 0.40
-            + performance_score * 0.28
-            + availability_score * 0.17
-            + workload_score * 0.15
+            skill_match_score * 0.38
+            + performance_score * 0.30
+            + availability_score * 0.16
+            + workload_score * 0.16
         )
 
     elif strategy == "urgency":
         score = (
-            availability_score * 0.32
-            + workload_score * 0.24
+            availability_score * 0.30
+            + workload_score * 0.22
             + skill_match_score * 0.29
-            + performance_score * 0.15
+            + performance_score * 0.19
         )
         if task.priority in {"high", "critical"} and availability_score >= 65:
             score += 4
@@ -355,10 +483,13 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
         else:
             learning_fit = 34
 
+        if metrics.get("same_task_type_history_count", 0) >= 1 and metrics.get("same_task_type_success_rate", 50) >= 70:
+            learning_fit += 4
+
         score = (
-            availability_score * 0.22
-            + workload_score * 0.20
-            + performance_score * 0.16
+            availability_score * 0.20
+            + workload_score * 0.18
+            + performance_score * 0.20
             + learning_fit * 0.42
         )
 
@@ -367,10 +498,10 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
 
     else:  # balance
         score = (
-            skill_match_score * 0.40
-            + workload_score * 0.22
-            + availability_score * 0.18
-            + performance_score * 0.20
+            skill_match_score * 0.38
+            + workload_score * 0.20
+            + availability_score * 0.17
+            + performance_score * 0.25
         )
 
     if task.priority == "critical" and metrics["current_load"] > 75:
@@ -404,6 +535,10 @@ def _apply_business_guardrails(
     high_priority = task.priority in {"high", "critical"}
     high_complexity = int(task.complexity or 0) >= 4
     overloaded = metrics["current_load"] >= 90 or metrics["availability"] <= 10
+
+    same_task_type_count = int(metrics.get("same_task_type_history_count", 0) or 0)
+    same_task_type_success_rate = float(metrics.get("same_task_type_success_rate", 50) or 50)
+    recent_5_success_rate = float(metrics.get("recent_5_success_rate", 50) or 50)
 
     if strategy == "balance":
         if exact_fit:
@@ -459,6 +594,19 @@ def _apply_business_guardrails(
             learning_penalty = 8 if int(task.complexity or 0) <= 2 else 14
             adjusted -= learning_penalty
             notes.append("la curva de aprendizaje sería alta para esta tarea")
+
+    if same_task_type_count >= 2:
+        if same_task_type_success_rate >= 75:
+            adjusted += 4
+            notes.append("tiene buen antecedente en tareas similares")
+        elif same_task_type_success_rate < 45:
+            adjusted -= 4
+            notes.append("su historial en tareas similares es limitado")
+
+    if recent_5_success_rate >= 80:
+        adjusted += 2
+    elif recent_5_success_rate < 45 and metrics.get("historical_tasks_with_outcome", 0) >= 5:
+        adjusted -= 2
 
     if high_priority and no_fit:
         adjusted -= 6
@@ -526,6 +674,11 @@ def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str, ex
     else:
         parts.append(f"carga alta ({metrics['current_load']}%)")
 
+    if metrics.get("same_task_type_history_count", 0) >= 2:
+        parts.append(
+            f"experiencia previa en tareas similares ({metrics['same_task_type_success_rate']}% de éxito)"
+        )
+
     if strategy == "efficiency":
         parts.append("la estrategia prioriza rendimiento y ajuste técnico")
     elif strategy == "urgency":
@@ -588,7 +741,7 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
     if not project_membership:
         return None
 
-    metrics = calculate_member_metrics(db, user, project_membership)
+    metrics = calculate_member_metrics(db, user, project_membership, task)
     skill_match = calculate_skill_match(task, user)
 
     chosen_strategy = strategy if strategy in ALLOWED_STRATEGIES else "balance"
@@ -668,14 +821,14 @@ def _compute_model_weight() -> float:
     f1 = _to_float(metrics.get("f1"), 0.0)
     roc_auc = _to_float(metrics.get("roc_auc"), 0.0)
 
-    readiness_score = (accuracy * 0.20) + (f1 * 0.35) + (roc_auc * 0.45)
+    readiness_score = (accuracy * 0.18) + (f1 * 0.34) + (roc_auc * 0.48)
 
     if readiness_score >= 0.82:
-        return 0.32
+        return 0.34
     if readiness_score >= 0.75:
-        return 0.28
-    if readiness_score >= 0.68:
-        return 0.22
+        return 0.30
+    if readiness_score >= 0.70:
+        return 0.24
     return 0.18
 
 
@@ -692,11 +845,7 @@ def _build_hybrid_evaluation(
 ):
     required_skills_count = int(skill_match.get("required_count", 0) or 0)
     matching_skills_count = int(len(skill_match.get("matching_skills", [])))
-    matching_ratio = (
-        round((matching_skills_count / required_skills_count), 4)
-        if required_skills_count > 0
-        else 0.0
-    )
+    matching_ratio = float(skill_match.get("matching_ratio", 0.0) or 0.0)
 
     if mode == "heuristic":
         return {
@@ -711,6 +860,8 @@ def _build_hybrid_evaluation(
         source="recommended",
         strategy=strategy,
         priority_snapshot=task.priority,
+        task_type_snapshot=task.task_type or "other",
+        snapshot_quality="live_member_profile",
         recommendation_score=float(heuristic_score),
         workload_score=float(components["workload_score"]),
         skill_match_score=float(components["skill_match_score"]),
@@ -724,6 +875,17 @@ def _build_hybrid_evaluation(
         matching_ratio=matching_ratio,
         estimated_hours_snapshot=float(task.estimated_hours) if task.estimated_hours is not None else None,
         complexity_snapshot=int(task.complexity),
+        historical_tasks_with_outcome=int(metrics.get("historical_tasks_with_outcome", 0) or 0),
+        historical_success_rate=float(metrics.get("historical_success_rate", 50) or 50),
+        historical_avg_success_score=float(metrics.get("historical_avg_success_score", 60) or 60),
+        historical_on_time_rate=float(metrics.get("historical_on_time_rate", 50) or 50),
+        historical_quality_index=float(metrics.get("historical_quality_index", 60) or 60),
+        historical_no_rework_rate=float(metrics.get("historical_no_rework_rate", 50) or 50),
+        same_task_type_history_count=int(metrics.get("same_task_type_history_count", 0) or 0),
+        same_task_type_success_rate=float(metrics.get("same_task_type_success_rate", 50) or 50),
+        same_priority_history_count=int(metrics.get("same_priority_history_count", 0) or 0),
+        same_priority_success_rate=float(metrics.get("same_priority_success_rate", 50) or 50),
+        recent_5_success_rate=float(metrics.get("recent_5_success_rate", 50) or 50),
     )
 
     ml_success_probability = predict_success_probability_from_features(feature_payload, model=model)
@@ -767,7 +929,7 @@ def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
     baseline_model = load_baseline_model() if mode == "hybrid" else None
 
     for member, membership in get_eligible_project_members(task):
-        metrics = calculate_member_metrics(db, member, membership)
+        metrics = calculate_member_metrics(db, member, membership, task)
         skill_match = calculate_skill_match(task, member)
         base_score, components = calculate_score(task, metrics, skill_match, strategy)
 

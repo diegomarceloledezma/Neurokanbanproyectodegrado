@@ -18,9 +18,12 @@ from app.models import (
     User,
 )
 from app.routes.auth import get_current_user, has_any_role
+from app.services.demo_setup_service import create_training_benchmark_batch
 from app.services.historical_backfill_service import (
     backfill_assignment_history_from_existing_tasks,
+    backfill_missing_outcomes_from_completed_tasks,
 )
+from app.services.training_dataset_service import build_training_growth_summary
 
 router = APIRouter(prefix="/data-provenance", tags=["Data Provenance"])
 
@@ -413,6 +416,35 @@ def get_training_readiness(
     }
 
 
+@router.get("/dataset-growth-summary")
+def get_dataset_growth_summary(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin", "leader"):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para ver el crecimiento del dataset",
+        )
+
+    return build_training_growth_summary(db)
+
+
+@router.post("/backfill-missing-outcomes")
+def run_missing_outcomes_backfill(
+    limit: int = Query(default=300, ge=1, le=5000),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede ejecutar el backfill de outcomes",
+        )
+
+    return backfill_missing_outcomes_from_completed_tasks(db, limit=limit)
+
+
 @router.post("/backfill-assignment-history")
 def run_assignment_history_backfill(
     limit: int = Query(default=200, ge=1, le=5000),
@@ -426,3 +458,69 @@ def run_assignment_history_backfill(
         )
 
     return backfill_assignment_history_from_existing_tasks(db, limit=limit)
+
+
+@router.post("/expand-training-base")
+def expand_training_base(
+    source_project_id: int = Query(default=1, ge=1),
+    outcomes_limit: int = Query(default=300, ge=0, le=5000),
+    history_limit: int = Query(default=400, ge=0, le=5000),
+    benchmark_scenarios: int = Query(default=4, ge=0, le=50),
+    seed: int = Query(default=42),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if not has_any_role(current_user, "admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo un administrador puede expandir la base de entrenamiento",
+        )
+
+    before_summary = build_training_growth_summary(db)
+
+    outcomes_result = None
+    history_result = None
+    benchmark_result = None
+
+    if outcomes_limit > 0:
+        outcomes_result = backfill_missing_outcomes_from_completed_tasks(db, limit=outcomes_limit)
+
+    if history_limit > 0:
+        history_result = backfill_assignment_history_from_existing_tasks(db, limit=history_limit)
+
+    if benchmark_scenarios > 0:
+        benchmark = create_training_benchmark_batch(
+            db,
+            source_project_id=source_project_id,
+            scenario_count=benchmark_scenarios,
+            seed=seed,
+        )
+        benchmark_result = {
+            "source_project_id": benchmark.source_project_id,
+            "scenarios_created": benchmark.scenarios_created,
+            "projects_created": benchmark.projects_created,
+            "tasks_created": benchmark.tasks_created,
+            "assignment_histories_created": benchmark.assignment_histories_created,
+            "outcomes_created": benchmark.outcomes_created,
+            "created_project_ids": benchmark.created_project_ids[:20],
+            "sample_tasks": benchmark.sample_tasks[:10],
+        }
+
+    after_summary = build_training_growth_summary(db)
+
+    return {
+        "message": "Expansión de la base de entrenamiento ejecutada correctamente",
+        "before": before_summary,
+        "operations": {
+            "outcomes_backfill": outcomes_result,
+            "assignment_history_backfill": history_result,
+            "benchmark_batch": benchmark_result,
+        },
+        "after": after_summary,
+        "delta": {
+            "raw_total_rows": int(after_summary["raw_total_rows"] - before_summary["raw_total_rows"]),
+            "clean_total_rows": int(after_summary["clean_total_rows"] - before_summary["clean_total_rows"]),
+            "unique_projects_covered": int(after_summary["unique_projects_covered"] - before_summary["unique_projects_covered"]),
+            "unique_tasks_covered": int(after_summary["unique_tasks_covered"] - before_summary["unique_tasks_covered"]),
+        },
+    }

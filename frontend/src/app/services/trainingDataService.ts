@@ -1,7 +1,14 @@
 import { API_BASE_URL } from "../config";
 import { getAccessToken } from "./sessionService";
 
-export type CleanTrainingPreviewRow = {
+export type TrainingClassBalance = {
+  negative_count: number;
+  positive_count: number;
+  minority_ratio_percent: number;
+  assessment: string;
+};
+
+export type TrainingPreviewRow = {
   assignment_decision_id: number;
   task_id: number;
   project_id: number;
@@ -37,6 +44,15 @@ export type ExcludedTrainingRow = {
   reasons: string[];
 };
 
+export type TrainingPreviewResponse = {
+  total_rows: number;
+  label_distribution: Record<string, number>;
+  source_distribution: Record<string, number>;
+  strategy_distribution: Record<string, number>;
+  class_balance: TrainingClassBalance;
+  sample_rows: TrainingPreviewRow[];
+};
+
 export type CleanTrainingPreviewResponse = {
   raw_total_rows: number;
   clean_total_rows: number;
@@ -45,13 +61,35 @@ export type CleanTrainingPreviewResponse = {
   label_distribution: Record<string, number>;
   source_distribution: Record<string, number>;
   strategy_distribution: Record<string, number>;
-  sample_rows: CleanTrainingPreviewRow[];
+  class_balance: TrainingClassBalance;
+  sample_rows: TrainingPreviewRow[];
   sample_excluded_rows: ExcludedTrainingRow[];
 };
 
 async function parseApiError(response: Response, fallback: string): Promise<never> {
   const data = await response.json().catch(() => null);
   throw new Error(data?.detail || fallback);
+}
+
+export async function getTrainingPreview(
+  limit = 20,
+  token?: string
+): Promise<TrainingPreviewResponse> {
+  const authToken = token ?? getAccessToken();
+
+  const response = await fetch(`${API_BASE_URL}/training-data/preview?limit=${limit}`, {
+    headers: authToken
+      ? {
+          Authorization: `Bearer ${authToken}`,
+        }
+      : undefined,
+  });
+
+  if (!response.ok) {
+    await parseApiError(response, "No se pudo cargar la vista previa del dataset.");
+  }
+
+  return response.json();
 }
 
 export async function getCleanTrainingPreview(
@@ -72,7 +110,10 @@ export async function getCleanTrainingPreview(
   );
 
   if (!response.ok) {
-    await parseApiError(response, "No se pudo obtener el preview del dataset limpio.");
+    await parseApiError(
+      response,
+      "No se pudo cargar la vista previa del dataset limpio."
+    );
   }
 
   return response.json();

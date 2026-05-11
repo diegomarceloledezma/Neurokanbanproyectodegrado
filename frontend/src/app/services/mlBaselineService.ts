@@ -7,6 +7,7 @@ export type ModelMetricSummary = {
   recall: number;
   f1: number;
   roc_auc: number;
+  balanced_accuracy?: number;
 };
 
 export type ModelCoefficient = {
@@ -30,6 +31,24 @@ export type ClassificationReport = {
   "weighted avg"?: ClassificationReportItem;
 };
 
+export type ClassBalanceSummary = {
+  negative_count: number;
+  positive_count: number;
+  minority_ratio_percent: number;
+  assessment: string;
+};
+
+export type ModelReadinessSummary = {
+  confidence_band: string;
+  recommended_usage: string;
+};
+
+export type CandidateModelSummary = {
+  model_name: string;
+  selection_score: number;
+  metrics: ModelMetricSummary;
+};
+
 export type BaselineMetadata = {
   model_type: string;
   target: string;
@@ -41,13 +60,17 @@ export type BaselineMetadata = {
   train_rows: number;
   test_rows: number;
   label_distribution: Record<string, number>;
+  class_balance?: ClassBalanceSummary;
   test_size: number;
   random_state: number;
   metrics: ModelMetricSummary;
+  model_readiness?: ModelReadinessSummary;
   numeric_features: string[];
   categorical_features: string[];
   top_coefficients: ModelCoefficient[];
   classification_report?: ClassificationReport;
+  selection_score?: number;
+  candidate_models?: CandidateModelSummary[];
 };
 
 export type BaselineStatusResponse = {
@@ -63,6 +86,7 @@ export type TrainBaselineResponse = BaselineMetadata & {
   raw_rows?: number;
   clean_rows?: number;
   excluded_rows?: number;
+  class_balance?: ClassBalanceSummary;
 };
 
 async function parseApiError(response: Response, fallback: string): Promise<never> {

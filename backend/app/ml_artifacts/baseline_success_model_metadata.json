@@ -1,25 +1,36 @@
 {
-  "model_type": "LogisticRegression",
+  "model_type": "RandomForest",
   "target": "success_label",
   "project_id": null,
-  "project_name": "NeuroKanban - entrenamiento compacto depurado",
+  "project_name": "NeuroKanban - candidato compacto limpio",
   "training_source": "historical_internal_data_cleaned",
   "training_variant": "compact_cleaned_history",
-  "dataset_rows": 211,
-  "train_rows": 158,
-  "test_rows": 53,
+  "dataset_rows": 309,
+  "train_rows": 231,
+  "test_rows": 78,
   "label_distribution": {
-    "0": 139,
-    "1": 72
+    "0": 173,
+    "1": 136
+  },
+  "class_balance": {
+    "negative_count": 173,
+    "positive_count": 136,
+    "minority_ratio_percent": 44.01,
+    "assessment": "alto"
   },
   "test_size": 0.25,
   "random_state": 42,
   "metrics": {
-    "accuracy": 0.6604,
-    "precision": 0.5,
-    "recall": 0.7222,
-    "f1": 0.5909,
-    "roc_auc": 0.7571
+    "accuracy": 0.7564,
+    "balanced_accuracy": 0.7574,
+    "precision": 0.7027,
+    "recall": 0.7647,
+    "f1": 0.7324,
+    "roc_auc": 0.8382
+  },
+  "model_readiness": {
+    "confidence_band": "alta",
+    "recommended_usage": "produccion_supervisada"
   },
   "numeric_features": [
     "recommendation_score",
@@ -29,114 +40,204 @@
     "required_skills_count",
     "matching_ratio",
     "estimated_hours_snapshot",
-    "complexity_snapshot"
+    "complexity_snapshot",
+    "historical_tasks_with_outcome",
+    "historical_success_rate",
+    "historical_avg_success_score",
+    "historical_on_time_rate",
+    "historical_quality_index",
+    "historical_no_rework_rate",
+    "same_task_type_success_rate",
+    "same_priority_success_rate",
+    "recent_5_success_rate"
   ],
   "categorical_features": [
     "strategy",
-    "priority_snapshot"
+    "priority_snapshot",
+    "task_type_snapshot",
+    "snapshot_quality"
   ],
   "top_coefficients": [
     {
-      "feature": "cat__strategy_efficiency",
-      "coefficient": -1.633917,
-      "absolute_weight": 1.633917
+      "feature": "num__historical_tasks_with_outcome",
+      "coefficient": 0.107257,
+      "absolute_weight": 0.107257
     },
     {
-      "feature": "cat__strategy_balance",
-      "coefficient": 1.093043,
-      "absolute_weight": 1.093043
+      "feature": "num__historical_quality_index",
+      "coefficient": 0.092712,
+      "absolute_weight": 0.092712
     },
     {
-      "feature": "num__skill_match_score",
-      "coefficient": 1.089484,
-      "absolute_weight": 1.089484
+      "feature": "num__historical_no_rework_rate",
+      "coefficient": 0.083741,
+      "absolute_weight": 0.083741
     },
     {
-      "feature": "num__performance_score",
-      "coefficient": 0.513696,
-      "absolute_weight": 0.513696
-    },
-    {
-      "feature": "num__matching_ratio",
-      "coefficient": -0.293694,
-      "absolute_weight": 0.293694
-    },
-    {
-      "feature": "cat__priority_snapshot_low",
-      "coefficient": -0.273571,
-      "absolute_weight": 0.273571
+      "feature": "num__historical_success_rate",
+      "coefficient": 0.071011,
+      "absolute_weight": 0.071011
     },
     {
       "feature": "num__recommendation_score",
-      "coefficient": 0.215197,
-      "absolute_weight": 0.215197
-    },
-    {
-      "feature": "num__complexity_snapshot",
-      "coefficient": -0.214798,
-      "absolute_weight": 0.214798
-    },
-    {
-      "feature": "cat__priority_snapshot_high",
-      "coefficient": -0.20676,
-      "absolute_weight": 0.20676
-    },
-    {
-      "feature": "cat__priority_snapshot_critical",
-      "coefficient": 0.183661,
-      "absolute_weight": 0.183661
-    },
-    {
-      "feature": "num__required_skills_count",
-      "coefficient": 0.163507,
-      "absolute_weight": 0.163507
-    },
-    {
-      "feature": "cat__strategy_learning",
-      "coefficient": 0.157882,
-      "absolute_weight": 0.157882
-    },
-    {
-      "feature": "cat__priority_snapshot_medium",
-      "coefficient": -0.109421,
-      "absolute_weight": 0.109421
+      "coefficient": 0.070858,
+      "absolute_weight": 0.070858
     },
     {
       "feature": "num__estimated_hours_snapshot",
-      "coefficient": 0.079455,
-      "absolute_weight": 0.079455
+      "coefficient": 0.061603,
+      "absolute_weight": 0.061603
+    },
+    {
+      "feature": "num__historical_avg_success_score",
+      "coefficient": 0.059866,
+      "absolute_weight": 0.059866
+    },
+    {
+      "feature": "num__historical_on_time_rate",
+      "coefficient": 0.059099,
+      "absolute_weight": 0.059099
+    },
+    {
+      "feature": "num__same_priority_success_rate",
+      "coefficient": 0.057261,
+      "absolute_weight": 0.057261
+    },
+    {
+      "feature": "num__same_task_type_success_rate",
+      "coefficient": 0.05423,
+      "absolute_weight": 0.05423
+    },
+    {
+      "feature": "num__performance_score",
+      "coefficient": 0.039923,
+      "absolute_weight": 0.039923
+    },
+    {
+      "feature": "num__recent_5_success_rate",
+      "coefficient": 0.039341,
+      "absolute_weight": 0.039341
+    },
+    {
+      "feature": "num__skill_match_score",
+      "coefficient": 0.033434,
+      "absolute_weight": 0.033434
+    },
+    {
+      "feature": "num__complexity_snapshot",
+      "coefficient": 0.026008,
+      "absolute_weight": 0.026008
+    },
+    {
+      "feature": "num__matching_ratio",
+      "coefficient": 0.025036,
+      "absolute_weight": 0.025036
+    },
+    {
+      "feature": "cat__strategy_balance",
+      "coefficient": 0.017429,
+      "absolute_weight": 0.017429
+    },
+    {
+      "feature": "num__required_skills_count",
+      "coefficient": 0.015402,
+      "absolute_weight": 0.015402
+    },
+    {
+      "feature": "cat__task_type_snapshot_bug",
+      "coefficient": 0.011371,
+      "absolute_weight": 0.011371
     },
     {
       "feature": "cat__strategy_urgency",
-      "coefficient": -0.023099,
-      "absolute_weight": 0.023099
+      "coefficient": 0.009594,
+      "absolute_weight": 0.009594
+    },
+    {
+      "feature": "cat__task_type_snapshot_design",
+      "coefficient": 0.009085,
+      "absolute_weight": 0.009085
     }
   ],
   "classification_report": {
     "0": {
-      "precision": 0.8148148148148148,
-      "recall": 0.6285714285714286,
-      "f1-score": 0.7096774193548387,
-      "support": 35.0
+      "precision": 0.8048780487804879,
+      "recall": 0.75,
+      "f1-score": 0.7764705882352941,
+      "support": 44.0
     },
     "1": {
-      "precision": 0.5,
-      "recall": 0.7222222222222222,
-      "f1-score": 0.5909090909090909,
-      "support": 18.0
+      "precision": 0.7027027027027027,
+      "recall": 0.7647058823529411,
+      "f1-score": 0.7323943661971831,
+      "support": 34.0
     },
-    "accuracy": 0.660377358490566,
+    "accuracy": 0.7564102564102564,
     "macro avg": {
-      "precision": 0.6574074074074074,
-      "recall": 0.6753968253968254,
-      "f1-score": 0.6502932551319649,
-      "support": 53.0
+      "precision": 0.7537903757415954,
+      "recall": 0.7573529411764706,
+      "f1-score": 0.7544324772162386,
+      "support": 78.0
     },
     "weighted avg": {
-      "precision": 0.7078965758211041,
-      "recall": 0.660377358490566,
-      "f1-score": 0.6693410059204338,
-      "support": 53.0
+      "precision": 0.7603400774132482,
+      "recall": 0.7564102564102564,
+      "f1-score": 0.7572578760648355,
+      "support": 78.0
     }
-  }
+  },
+  "selection_score": 0.7928,
+  "candidate_models": [
+    {
+      "model_name": "RandomForest",
+      "selection_score": 0.7928,
+      "metrics": {
+        "accuracy": 0.7564,
+        "balanced_accuracy": 0.7574,
+        "precision": 0.7027,
+        "recall": 0.7647,
+        "f1": 0.7324,
+        "roc_auc": 0.8382
+      }
+    },
+    {
+      "model_name": "LogisticRegression",
+      "selection_score": 0.7627,
+      "metrics": {
+        "accuracy": 0.7564,
+        "balanced_accuracy": 0.7574,
+        "precision": 0.7027,
+        "recall": 0.7647,
+        "f1": 0.7324,
+        "roc_auc": 0.7781
+      }
+    },
+    {
+      "model_name": "HistGradientBoosting",
+      "selection_score": 0.761,
+      "metrics": {
+        "accuracy": 0.7436,
+        "balanced_accuracy": 0.736,
+        "precision": 0.7188,
+        "recall": 0.6765,
+        "f1": 0.697,
+        "roc_auc": 0.8108
+      }
+    },
+    {
+      "model_name": "ExtraTrees",
+      "selection_score": 0.7415,
+      "metrics": {
+        "accuracy": 0.6923,
+        "balanced_accuracy": 0.6939,
+        "precision": 0.6316,
+        "recall": 0.7059,
+        "f1": 0.6667,
+        "roc_auc": 0.7995
+      }
+    }
+  ],
+  "champion_score": 0.8928,
+  "champion_variant_key": "compact_cleaned",
+  "champion_variant_label": "Compacto limpio"
 }

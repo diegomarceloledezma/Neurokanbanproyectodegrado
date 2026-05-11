@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
   TrendingUp,
+  Trophy,
 } from "lucide-react";
 import {
   getMlBaselineStatus,
@@ -110,6 +111,7 @@ function humanizeReason(reason: string) {
     no_required_skills: "Sin habilidades requeridas",
     invalid_matching_ratio: "Matching ratio inválido",
     invalid_complexity: "Complejidad inválida",
+    invalid_operational_snapshot: "Snapshot operativo inválido",
   };
 
   return map[reason] ?? reason;
@@ -150,10 +152,7 @@ function labelDistributionSummary(metadata: BaselineMetadata | null) {
   };
 }
 
-function topItems<T extends { label: string; count: number }>(
-  items: T[] | undefined,
-  limit = 5
-) {
+function topItems<T extends { label: string; count: number }>(items: T[] | undefined, limit = 5) {
   return (items ?? []).slice(0, limit);
 }
 
@@ -186,23 +185,21 @@ function evaluateModelLevel(metadata: BaselineMetadata | null): ExecutiveLevel {
 
   let score = 0;
 
-  if (accuracy >= 0.7) score += 2;
-  else if (accuracy >= 0.63) score += 1;
+  if (accuracy >= 0.72) score += 2;
+  else if (accuracy >= 0.65) score += 1;
 
-  if (f1 >= 0.65) score += 2;
-  else if (f1 >= 0.55) score += 1;
+  if (f1 >= 0.68) score += 2;
+  else if (f1 >= 0.58) score += 1;
 
-  if (rocAuc >= 0.8) score += 2;
-  else if (rocAuc >= 0.72) score += 1;
+  if (rocAuc >= 0.82) score += 2;
+  else if (rocAuc >= 0.74) score += 1;
 
   if (score >= 4) return "alta";
   if (score >= 2) return "media";
   return "baja";
 }
 
-function evaluateReadinessLevel(
-  readiness: TrainingReadinessResponse | null
-): ExecutiveLevel {
+function evaluateReadinessLevel(readiness: TrainingReadinessResponse | null): ExecutiveLevel {
   if (!readiness) return "baja";
 
   if (readiness.readiness_score >= 85) return "alta";
@@ -220,13 +217,10 @@ function evaluateHistoricalEvidenceLevel(
   return "baja";
 }
 
-function evaluateDataQualityLevel(
-  cleanPreview: CleanTrainingPreviewResponse | null
-): ExecutiveLevel {
+function evaluateDataQualityLevel(cleanPreview: CleanTrainingPreviewResponse | null): ExecutiveLevel {
   if (!cleanPreview || cleanPreview.raw_total_rows <= 0) return "baja";
 
-  const cleanRate =
-    (cleanPreview.clean_total_rows / cleanPreview.raw_total_rows) * 100;
+  const cleanRate = (cleanPreview.clean_total_rows / cleanPreview.raw_total_rows) * 100;
 
   if (cleanRate >= 70) return "alta";
   if (cleanRate >= 50) return "media";
@@ -267,11 +261,9 @@ function buildExecutiveSummary(params: {
 
   if (metadata) {
     findings.push(
-      `El baseline activo usa la variante ${humanizeVariant(
+      `El modelo activo es ${metadata.model_type} con variante ${humanizeVariant(
         metadata.training_variant
-      ).toLowerCase()} y alcanza ROC AUC de ${formatPercent(
-        metadata.metrics.roc_auc
-      )}.`
+      ).toLowerCase()} y ROC AUC de ${formatPercent(metadata.metrics.roc_auc)}.`
     );
   }
 
@@ -304,17 +296,17 @@ function buildExecutiveSummary(params: {
   }
 
   let verdict =
-    "El sistema ya cuenta con una base defendible y un pipeline funcional, aunque todavía está en fase baseline y admite mejoras futuras.";
+    "El sistema ya cuenta con un pipeline funcional, aunque todavía debe seguir fortaleciendo datos y validación.";
 
   if (overallLevel === "alta") {
     verdict =
-      "El sistema presenta una base sólida para demo y defensa: tiene trazabilidad, evidencia histórica, dataset depurado y un modelo funcional con soporte cuantitativo.";
+      "El sistema presenta una base sólida para fase final: competencia de modelos, evidencia histórica, dataset depurado y señales cuantitativas defendibles.";
   } else if (overallLevel === "media") {
     verdict =
-      "El sistema es defendible como MVP inteligente: ya muestra pipeline, trazabilidad y evidencia histórica, aunque el rendimiento del modelo todavía debe seguir fortaleciéndose.";
+      "El sistema ya es defendible como solución inteligente funcional, aunque todavía conviene seguir ampliando dataset y validación para aumentar confianza empresarial.";
   } else if (overallLevel === "baja") {
     verdict =
-      "El sistema ya demuestra arquitectura inteligente y trazabilidad, pero todavía requiere fortalecer datos y validación histórica para una defensa más robusta.";
+      "El sistema ya demuestra arquitectura inteligente y trazabilidad, pero todavía requiere fortalecer datos y rendimiento antes de una confianza alta.";
   }
 
   return {
@@ -332,12 +324,9 @@ export default function ModelIntelligence() {
   const token = getAccessToken();
 
   const [status, setStatus] = useState<BaselineStatusResponse | null>(null);
-  const [cleanPreview, setCleanPreview] =
-    useState<CleanTrainingPreviewResponse | null>(null);
+  const [cleanPreview, setCleanPreview] = useState<CleanTrainingPreviewResponse | null>(null);
   const [report, setReport] = useState<DataProvenanceReportResponse | null>(null);
-  const [readiness, setReadiness] = useState<TrainingReadinessResponse | null>(
-    null
-  );
+  const [readiness, setReadiness] = useState<TrainingReadinessResponse | null>(null);
   const [effectiveness, setEffectiveness] =
     useState<AssignmentEffectivenessSummaryResponse | null>(null);
 
@@ -358,6 +347,10 @@ export default function ModelIntelligence() {
       cleanPreview,
     });
   }, [metadata, readiness, effectiveness, cleanPreview]);
+
+  const candidateModels = metadata?.candidate_models ?? [];
+  const classBalance = metadata?.class_balance ?? cleanPreview?.class_balance ?? null;
+  const modelReadiness = metadata?.model_readiness ?? null;
 
   const loadAll = async (isRefresh = false) => {
     try {
@@ -407,7 +400,7 @@ export default function ModelIntelligence() {
       const result = await trainCompactCleanedBaseline(token || undefined);
 
       setTrainingMessage(
-        `Modelo reentrenado correctamente. Accuracy: ${formatPercent(
+        `Modelo reentrenado correctamente. Ganador: ${result.model_type}. Accuracy: ${formatPercent(
           result.metrics?.accuracy
         )} · F1: ${formatPercent(result.metrics?.f1)} · ROC AUC: ${formatPercent(
           result.metrics?.roc_auc
@@ -466,36 +459,30 @@ export default function ModelIntelligence() {
               <span className="px-3 py-1 rounded-lg border border-green-500/20 bg-green-500/10 text-green-300 text-sm">
                 Modelo activo
               </span>
+              <span className="px-3 py-1 rounded-lg border border-purple-500/20 bg-purple-500/10 text-purple-300 text-sm">
+                Ganador: {metadata.model_type}
+              </span>
             </div>
 
             <p className="text-slate-300 text-lg">
-              Variante activa:{" "}
-              <span className="text-white">{humanizeVariant(metadata.training_variant)}</span>
+              Variante activa: <span className="text-white">{humanizeVariant(metadata.training_variant)}</span>
             </p>
 
             <p className="text-slate-400 mt-2 max-w-3xl">
-              Este panel resume la versión activa del baseline, la calidad del dataset depurado,
-              el readiness del entrenamiento y la evidencia histórica del desempeño de las asignaciones.
+              Este panel resume el modelo activo, la competencia entre candidatos, la calidad del dataset
+              depurado, el readiness del entrenamiento y la evidencia histórica del desempeño de las asignaciones.
             </p>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
-            <button
-              onClick={() => loadAll(true)}
-              disabled={refreshing}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 transition-all disabled:opacity-60"
-            >
+            <button onClick={() => loadAll(true)} disabled={refreshing} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:bg-slate-700 transition-all disabled:opacity-60" >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
               {refreshing ? "Actualizando..." : "Actualizar"}
             </button>
 
-            <button
-              onClick={handleRetrain}
-              disabled={training}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20 transition-all disabled:opacity-60"
-            >
+            <button onClick={handleRetrain} disabled={training} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20 transition-all disabled:opacity-60" >
               <Sparkles className={`w-4 h-4 ${training ? "animate-pulse" : ""}`} />
-              {training ? "Reentrenando..." : "Reentrenar compacto"}
+              {training ? "Reentrenando..." : "Competir y reentrenar"}
             </button>
           </div>
         </div>
@@ -536,14 +523,14 @@ export default function ModelIntelligence() {
           </div>
 
           <div className={`rounded-xl border p-4 ${getLevelClasses(executiveSummary.evidenceLevel)}`}>
-            <p className="text-xs mb-1 opacity-80">Evidencia histórica</p>
+            <p className="text-xs mb-1 opacity-80">Evidencia</p>
             <p className="text-2xl font-semibold">
               {humanizeExecutiveLevel(executiveSummary.evidenceLevel)}
             </p>
           </div>
 
           <div className={`rounded-xl border p-4 ${getLevelClasses(executiveSummary.dataQualityLevel)}`}>
-            <p className="text-xs mb-1 opacity-80">Calidad de base</p>
+            <p className="text-xs mb-1 opacity-80">Calidad de datos</p>
             <p className="text-2xl font-semibold">
               {humanizeExecutiveLevel(executiveSummary.dataQualityLevel)}
             </p>
@@ -551,15 +538,11 @@ export default function ModelIntelligence() {
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-5">
-          <p className="text-slate-300 text-sm mb-2">Lectura ejecutiva</p>
-          <p className="text-white leading-relaxed">{executiveSummary.verdict}</p>
-        </div>
+          <p className="text-slate-200 leading-relaxed">{executiveSummary.verdict}</p>
 
-        <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-5">
-          <p className="text-slate-300 text-sm mb-3">Hallazgos clave</p>
-          <div className="space-y-2">
+          <div className="mt-4 space-y-2">
             {executiveSummary.findings.map((finding) => (
-              <p key={finding} className="text-slate-200 text-sm">
+              <p key={finding} className="text-slate-400 text-sm">
                 • {finding}
               </p>
             ))}
@@ -567,55 +550,85 @@ export default function ModelIntelligence() {
         </div>
       </div>
 
-      {readiness && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <ShieldCheck className="w-5 h-5 text-green-400" />
-              <span className="text-slate-300">Readiness score</span>
-            </div>
-            <p className="text-3xl text-white">{readiness.readiness_score.toFixed(2)}</p>
+      {candidateModels.length > 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Trophy className="w-5 h-5 text-yellow-400" />
+            <h2 className="text-xl text-white">Competencia de modelos</h2>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <CheckCircle2 className="w-5 h-5 text-cyan-400" />
-              <span className="text-slate-300">Nivel</span>
-            </div>
-            <p className="text-3xl text-white">{humanizeReadiness(readiness.readiness_level)}</p>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            {candidateModels.map((candidate: any, index: number) => (
+              <div key={candidate.model_name} className={`rounded-xl border p-5 ${ index === 0 ? "border-yellow-500/20 bg-yellow-500/10" : "border-slate-800 bg-slate-950/40" }`} >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-white text-lg font-semibold">{candidate.model_name}</p>
+                  {index === 0 && (
+                    <span className="px-3 py-1 rounded-lg bg-yellow-500/20 text-yellow-300 text-sm">
+                      Ganador
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+                  <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
+                    <p className="text-slate-400 text-xs mb-1">Selection score</p>
+                    <p className="text-white">{formatValue(candidate.selection_score)}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
+                    <p className="text-slate-400 text-xs mb-1">ROC AUC</p>
+                    <p className="text-white">{formatPercent(candidate.metrics?.roc_auc)}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
+                    <p className="text-slate-400 text-xs mb-1">F1</p>
+                    <p className="text-white">{formatPercent(candidate.metrics?.f1)}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
+                    <p className="text-slate-400 text-xs mb-1">Balanced Acc.</p>
+                    <p className="text-white">{formatPercent(candidate.metrics?.balanced_accuracy)}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {modelReadiness && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <ShieldCheck className="w-5 h-5 text-green-400" />
+            <h2 className="text-xl text-white">Readiness del modelo activo</h2>
           </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <Database className="w-5 h-5 text-yellow-400" />
-              <span className="text-slate-300">Aliases</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Banda de confianza</p>
+              <p className="text-white text-lg font-semibold capitalize">
+                {modelReadiness.confidence_band}
+              </p>
             </div>
-            <p className="text-3xl text-white">{readiness.counts.total_aliases}</p>
-          </div>
 
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <BarChart3 className="w-5 h-5 text-purple-400" />
-              <span className="text-slate-300">Asignaciones con outcome</span>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Uso recomendado</p>
+              <p className="text-white text-lg font-semibold">
+                {modelReadiness.recommended_usage}
+              </p>
             </div>
-            <p className="text-3xl text-white">{readiness.counts.assignment_records_with_outcome}</p>
           </div>
         </div>
       )}
 
       {effectiveness && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-5">
-          <div className="flex items-center gap-3">
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
             <TrendingUp className="w-5 h-5 text-cyan-400" />
-            <h2 className="text-2xl text-white">Efectividad histórica de asignaciones</h2>
+            <h2 className="text-xl text-white">Evidencia histórica de asignaciones</h2>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
             <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">Éxito promedio general</p>
-              <p className="text-white text-2xl">
-                {formatValue(effectiveness.average_success_score_overall)}
-              </p>
+              <p className="text-slate-400 text-xs mb-1">Registros con outcome</p>
+              <p className="text-white text-2xl">{effectiveness.total_records_with_outcome}</p>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
@@ -626,59 +639,17 @@ export default function ModelIntelligence() {
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">Éxito promedio no IA</p>
-              <p className="text-white text-2xl">
-                {formatValue(effectiveness.average_success_score_non_ai)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">Gap IA vs no IA</p>
-              <p className="text-white text-2xl">
-                {formatValue(effectiveness.ai_vs_non_ai_gap)}
-              </p>
+              <p className="text-slate-400 text-xs mb-1">Brecha IA vs no IA</p>
+              <p className="text-white text-2xl">{formatValue(effectiveness.ai_vs_non_ai_gap)}</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">A tiempo general</p>
-              <p className="text-white text-2xl">
-                {formatPlainPercent(effectiveness.overall_on_time_rate)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">A tiempo IA</p>
-              <p className="text-white text-2xl">
-                {formatPlainPercent(effectiveness.ai_on_time_rate)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">A tiempo no IA</p>
-              <p className="text-white text-2xl">
-                {formatPlainPercent(effectiveness.non_ai_on_time_rate)}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">Retrabajo general</p>
-              <p className="text-white text-2xl">
-                {formatPlainPercent(effectiveness.overall_rework_rate)}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
             <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
               <p className="text-slate-300 mb-3">Desglose por fuente</p>
               <div className="space-y-3">
                 {effectiveness.source_breakdown.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-lg border border-slate-800 bg-slate-900/60 p-4"
-                  >
+                  <div key={item.label} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4" >
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <p className="text-white font-medium">
                         {humanizeBreakdownLabel(item.label)}
@@ -712,10 +683,7 @@ export default function ModelIntelligence() {
               <p className="text-slate-300 mb-3">Desglose por estrategia</p>
               <div className="space-y-3">
                 {effectiveness.strategy_breakdown.map((item) => (
-                  <div
-                    key={item.label}
-                    className="rounded-lg border border-slate-800 bg-slate-900/60 p-4"
-                  >
+                  <div key={item.label} className="rounded-lg border border-slate-800 bg-slate-900/60 p-4" >
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <p className="text-white font-medium">
                         {humanizeBreakdownLabel(item.label)}
@@ -782,6 +750,36 @@ export default function ModelIntelligence() {
         </div>
       </div>
 
+      {classBalance && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Database className="w-5 h-5 text-yellow-400" />
+            <h2 className="text-xl text-white">Balance de clases</h2>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Clase negativa</p>
+              <p className="text-white text-2xl">{classBalance.negative_count}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Clase positiva</p>
+              <p className="text-white text-2xl">{classBalance.positive_count}</p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Minority ratio</p>
+              <p className="text-white text-2xl">
+                {formatPlainPercent(classBalance.minority_ratio_percent)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4">
+              <p className="text-slate-400 text-xs mb-1">Evaluación</p>
+              <p className="text-white text-2xl capitalize">{classBalance.assessment}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="xl:col-span-2 space-y-6">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -792,7 +790,7 @@ export default function ModelIntelligence() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">Tipo de modelo</p>
+                <p className="text-slate-400 text-xs mb-1">Modelo ganador</p>
                 <p className="text-white">{metadata.model_type}</p>
               </div>
 
@@ -844,10 +842,7 @@ export default function ModelIntelligence() {
                 <p className="text-slate-300 mb-3">Variables numéricas</p>
                 <div className="flex flex-wrap gap-2">
                   {metadata.numeric_features.map((feature) => (
-                    <span
-                      key={feature}
-                      className="px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm"
-                    >
+                    <span key={feature} className="px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm" >
                       {humanizeFeatureName(`num__${feature}`)}
                     </span>
                   ))}
@@ -858,10 +853,7 @@ export default function ModelIntelligence() {
                 <p className="text-slate-300 mb-3">Variables categóricas</p>
                 <div className="flex flex-wrap gap-2">
                   {metadata.categorical_features.map((feature) => (
-                    <span
-                      key={feature}
-                      className="px-3 py-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-sm"
-                    >
+                    <span key={feature} className="px-3 py-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 text-sm" >
                       {feature === "strategy"
                         ? "Estrategia"
                         : feature === "priority_snapshot"
@@ -879,23 +871,20 @@ export default function ModelIntelligence() {
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <div className="flex items-center gap-3 mb-4">
               <Activity className="w-5 h-5 text-green-400" />
-              <h2 className="text-xl text-white">Coeficientes principales</h2>
+              <h2 className="text-xl text-white">Importancia de variables</h2>
             </div>
 
             <div className="space-y-3">
-              {metadata.top_coefficients.map((item) => (
-                <div
-                  key={item.feature}
-                  className="p-4 rounded-lg bg-slate-800/40 border border-slate-700"
-                >
+              {metadata.top_coefficients.map((item: any) => (
+                <div key={item.feature} className="p-4 rounded-lg bg-slate-800/40 border border-slate-700" >
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <p className="text-white">{humanizeFeatureName(item.feature)}</p>
                     <div className="flex items-center gap-3 text-sm">
                       <span className="text-slate-400">
-                        Coeficiente: <span className="text-slate-200">{formatValue(item.coefficient)}</span>
+                        Peso: <span className="text-slate-200">{formatValue(item.coefficient)}</span>
                       </span>
                       <span className="text-slate-400">
-                        Peso abs.: <span className="text-slate-200">{formatValue(item.absolute_weight)}</span>
+                        Abs.: <span className="text-slate-200">{formatValue(item.absolute_weight)}</span>
                       </span>
                     </div>
                   </div>
@@ -903,107 +892,24 @@ export default function ModelIntelligence() {
               ))}
             </div>
           </div>
-
-          {report && (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-              <div className="flex items-center gap-3 mb-4">
-                <Database className="w-5 h-5 text-yellow-400" />
-                <h2 className="text-xl text-white">Trazabilidad de la base</h2>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm mb-4">
-                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="text-slate-400 text-xs mb-1">Skills totales</p>
-                  <p className="text-white text-2xl">{report.skills_catalog.total_skills}</p>
-                </div>
-
-                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="text-slate-400 text-xs mb-1">Con fuente</p>
-                  <p className="text-white text-2xl">{report.skills_catalog.skills_with_source}</p>
-                </div>
-
-                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="text-slate-400 text-xs mb-1">Aliases</p>
-                  <p className="text-white text-2xl">{report.skills_catalog.total_aliases}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="text-slate-300 mb-3">Skills por fuente</p>
-                  <div className="space-y-2">
-                    {topItems(report.skills_catalog.skills_by_source).map((item) => (
-                      <div key={item.label} className="flex items-center justify-between">
-                        <span className="text-slate-300">{item.label}</span>
-                        <span className="text-white">{item.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-                  <p className="text-slate-300 mb-3">Asignaciones por estrategia</p>
-                  <div className="space-y-2">
-                    {topItems(report.recommendation_flow.assignments_by_strategy).map((item) => (
-                      <div key={item.label} className="flex items-center justify-between">
-                        <span className="text-slate-300">{item.label}</span>
-                        <span className="text-white">{item.count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="space-y-6">
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
             <div className="flex items-center gap-3 mb-4">
               <ShieldCheck className="w-5 h-5 text-green-400" />
-              <h2 className="text-xl text-white">Distribución de clases</h2>
+              <h2 className="text-xl text-white">Etiqueta objetivo</h2>
             </div>
 
-            <div className="space-y-4 text-sm">
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">Casos clase 0</p>
-                <p className="text-white text-2xl">{distribution.negative}</p>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+                <p className="text-slate-400 text-xs mb-1">Clase 0</p>
+                <p className="text-white">{distribution.negative} registros</p>
               </div>
 
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">Casos clase 1</p>
-                <p className="text-white text-2xl">{distribution.positive}</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h2 className="text-xl text-white mb-4">Métricas detalladas</h2>
-
-            <div className="space-y-3 text-sm">
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">Accuracy</p>
-                <p className="text-white">{formatPercent(metrics.accuracy)}</p>
-              </div>
-
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">Precision</p>
-                <p className="text-white">{formatPercent(metrics.precision)}</p>
-              </div>
-
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">Recall</p>
-                <p className="text-white">{formatPercent(metrics.recall)}</p>
-              </div>
-
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">F1 Score</p>
-                <p className="text-white">{formatPercent(metrics.f1)}</p>
-              </div>
-
-              <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                <p className="text-slate-400 text-xs mb-1">ROC AUC</p>
-                <p className="text-white">{formatPercent(metrics.roc_auc)}</p>
+              <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+                <p className="text-slate-400 text-xs mb-1">Clase 1</p>
+                <p className="text-white">{distribution.positive} registros</p>
               </div>
             </div>
           </div>
@@ -1011,79 +917,76 @@ export default function ModelIntelligence() {
           {cleanPreview && (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
               <div className="flex items-center gap-3 mb-4">
-                <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                <Database className="w-5 h-5 text-yellow-400" />
                 <h2 className="text-xl text-white">Calidad del dataset limpio</h2>
               </div>
 
-              <div className="space-y-3 text-sm">
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
+              <div className="space-y-4 text-sm">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
                   <p className="text-slate-400 text-xs mb-1">Filas crudas</p>
                   <p className="text-white">{cleanPreview.raw_total_rows}</p>
                 </div>
 
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
                   <p className="text-slate-400 text-xs mb-1">Filas limpias</p>
                   <p className="text-white">{cleanPreview.clean_total_rows}</p>
                 </div>
 
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
                   <p className="text-slate-400 text-xs mb-1">Filas excluidas</p>
                   <p className="text-white">{cleanPreview.excluded_rows}</p>
                 </div>
 
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                  <p className="text-slate-400 text-xs mb-2">Motivos de exclusión</p>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-slate-400 text-xs mb-1">Balance del dataset</p>
+                  <p className="text-white capitalize">
+                    {cleanPreview.class_balance?.assessment || "No definido"}
+                  </p>
+                </div>
+              </div>
+
+              {Object.entries(cleanPreview.excluded_by_reason ?? {}).length > 0 && (
+                <div className="mt-5">
+                  <p className="text-slate-300 mb-3">Motivos de exclusión</p>
                   <div className="space-y-2">
                     {Object.entries(cleanPreview.excluded_by_reason).map(([reason, count]) => (
-                      <div key={reason} className="flex items-center justify-between gap-3">
-                        <span className="text-slate-300">{humanizeReason(reason)}</span>
-                        <span className="text-white">{count}</span>
+                      <div key={reason} className="flex items-center justify-between gap-3 rounded-lg border border-slate-800 bg-slate-950/40 px-4 py-3" >
+                        <span className="text-slate-300 text-sm">{humanizeReason(reason)}</span>
+                        <span className="text-slate-400 text-sm">{count}</span>
                       </div>
                     ))}
                   </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
 
-          {readiness && (
+          {report && (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-              <h2 className="text-xl text-white mb-4">Coberturas del entrenamiento</h2>
+              <div className="flex items-center gap-3 mb-4">
+                <AlertTriangle className="w-5 h-5 text-yellow-400" />
+                <h2 className="text-xl text-white">Proveniencia y cobertura</h2>
+              </div>
 
-              <div className="space-y-3 text-sm">
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                  <p className="text-slate-400 text-xs mb-1">Cobertura de fuente de skills</p>
+              <div className="space-y-4 text-sm">
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-slate-400 text-xs mb-1">Skills con fuente</p>
                   <p className="text-white">
-                    {formatPlainPercent(readiness.coverage.skills_source_coverage)}
+                    {report.skills_catalog.skills_with_source} / {report.skills_catalog.total_skills}
                   </p>
                 </div>
 
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                  <p className="text-slate-400 text-xs mb-1">Cobertura de tareas con skills</p>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-slate-400 text-xs mb-1">Tareas con skills requeridas</p>
                   <p className="text-white">
-                    {formatPlainPercent(readiness.coverage.task_skill_coverage)}
+                    {report.tasks.tasks_with_required_skills} / {report.tasks.total_tasks}
                   </p>
                 </div>
 
-                <div className="p-4 rounded-lg bg-slate-800/40 border border-slate-700">
-                  <p className="text-slate-400 text-xs mb-1">Asignaciones enlazadas con outcome</p>
-                  <p className="text-white">
-                    {formatPlainPercent(readiness.coverage.outcome_linked_assignment_coverage)}
-                  </p>
+                <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-slate-400 text-xs mb-1">Assignment history</p>
+                  <p className="text-white">{report.recommendation_flow.total_assignment_history}</p>
                 </div>
-
-                {readiness.observations.length > 0 && (
-                  <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-                    <p className="text-yellow-300 text-xs mb-2">Observaciones</p>
-                    <div className="space-y-2">
-                      {readiness.observations.map((observation) => (
-                        <p key={observation} className="text-slate-200 text-sm">
-                          • {observation}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}

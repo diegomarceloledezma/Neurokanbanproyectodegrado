@@ -2,7 +2,7 @@
   "model_type": "RandomForest",
   "target": "success_label",
   "project_id": null,
-  "project_name": "NeuroKanban - candidato compacto limpio",
+  "project_name": "NeuroKanban - entrenamiento compacto depurado",
   "training_source": "historical_internal_data_cleaned",
   "training_variant": "compact_cleaned_history",
   "dataset_rows": 309,
@@ -21,23 +21,28 @@
   "test_size": 0.25,
   "random_state": 42,
   "metrics": {
-    "accuracy": 0.7564,
-    "balanced_accuracy": 0.7574,
-    "precision": 0.7027,
-    "recall": 0.7647,
-    "f1": 0.7324,
-    "roc_auc": 0.8382
+    "accuracy": 0.7692,
+    "balanced_accuracy": 0.7721,
+    "precision": 0.7105,
+    "recall": 0.7941,
+    "f1": 0.75,
+    "roc_auc": 0.8449
   },
   "model_readiness": {
-    "confidence_band": "alta",
-    "recommended_usage": "produccion_supervisada"
+    "confidence_band": "media",
+    "recommended_usage": "apoyo_a_decision"
   },
   "numeric_features": [
     "recommendation_score",
+    "workload_score",
     "skill_match_score",
+    "availability_score",
     "performance_score",
     "current_load_snapshot",
+    "availability_snapshot",
+    "active_tasks_snapshot",
     "required_skills_count",
+    "matching_skills_count",
     "matching_ratio",
     "estimated_hours_snapshot",
     "complexity_snapshot",
@@ -47,11 +52,14 @@
     "historical_on_time_rate",
     "historical_quality_index",
     "historical_no_rework_rate",
+    "same_task_type_history_count",
     "same_task_type_success_rate",
+    "same_priority_history_count",
     "same_priority_success_rate",
     "recent_5_success_rate"
   ],
   "categorical_features": [
+    "source",
     "strategy",
     "priority_snapshot",
     "task_type_snapshot",
@@ -60,184 +68,618 @@
   "top_coefficients": [
     {
       "feature": "num__historical_tasks_with_outcome",
-      "coefficient": 0.107257,
-      "absolute_weight": 0.107257
+      "coefficient": 0.077488,
+      "absolute_weight": 0.077488
     },
     {
       "feature": "num__historical_quality_index",
-      "coefficient": 0.092712,
-      "absolute_weight": 0.092712
-    },
-    {
-      "feature": "num__historical_no_rework_rate",
-      "coefficient": 0.083741,
-      "absolute_weight": 0.083741
+      "coefficient": 0.076104,
+      "absolute_weight": 0.076104
     },
     {
       "feature": "num__historical_success_rate",
-      "coefficient": 0.071011,
-      "absolute_weight": 0.071011
+      "coefficient": 0.07121,
+      "absolute_weight": 0.07121
+    },
+    {
+      "feature": "num__historical_no_rework_rate",
+      "coefficient": 0.070289,
+      "absolute_weight": 0.070289
     },
     {
       "feature": "num__recommendation_score",
-      "coefficient": 0.070858,
-      "absolute_weight": 0.070858
+      "coefficient": 0.065005,
+      "absolute_weight": 0.065005
     },
     {
       "feature": "num__estimated_hours_snapshot",
-      "coefficient": 0.061603,
-      "absolute_weight": 0.061603
+      "coefficient": 0.052243,
+      "absolute_weight": 0.052243
     },
     {
-      "feature": "num__historical_avg_success_score",
-      "coefficient": 0.059866,
-      "absolute_weight": 0.059866
+      "feature": "num__same_task_type_history_count",
+      "coefficient": 0.051006,
+      "absolute_weight": 0.051006
     },
     {
       "feature": "num__historical_on_time_rate",
-      "coefficient": 0.059099,
-      "absolute_weight": 0.059099
+      "coefficient": 0.049529,
+      "absolute_weight": 0.049529
     },
     {
       "feature": "num__same_priority_success_rate",
-      "coefficient": 0.057261,
-      "absolute_weight": 0.057261
+      "coefficient": 0.048662,
+      "absolute_weight": 0.048662
+    },
+    {
+      "feature": "num__historical_avg_success_score",
+      "coefficient": 0.046934,
+      "absolute_weight": 0.046934
     },
     {
       "feature": "num__same_task_type_success_rate",
-      "coefficient": 0.05423,
-      "absolute_weight": 0.05423
+      "coefficient": 0.041248,
+      "absolute_weight": 0.041248
+    },
+    {
+      "feature": "num__same_priority_history_count",
+      "coefficient": 0.036057,
+      "absolute_weight": 0.036057
     },
     {
       "feature": "num__performance_score",
-      "coefficient": 0.039923,
-      "absolute_weight": 0.039923
+      "coefficient": 0.032742,
+      "absolute_weight": 0.032742
     },
     {
       "feature": "num__recent_5_success_rate",
-      "coefficient": 0.039341,
-      "absolute_weight": 0.039341
+      "coefficient": 0.029231,
+      "absolute_weight": 0.029231
     },
     {
       "feature": "num__skill_match_score",
-      "coefficient": 0.033434,
-      "absolute_weight": 0.033434
+      "coefficient": 0.026655,
+      "absolute_weight": 0.026655
     },
     {
       "feature": "num__complexity_snapshot",
-      "coefficient": 0.026008,
-      "absolute_weight": 0.026008
+      "coefficient": 0.02043,
+      "absolute_weight": 0.02043
     },
     {
       "feature": "num__matching_ratio",
-      "coefficient": 0.025036,
-      "absolute_weight": 0.025036
+      "coefficient": 0.018523,
+      "absolute_weight": 0.018523
     },
     {
       "feature": "cat__strategy_balance",
-      "coefficient": 0.017429,
-      "absolute_weight": 0.017429
+      "coefficient": 0.017748,
+      "absolute_weight": 0.017748
     },
     {
-      "feature": "num__required_skills_count",
-      "coefficient": 0.015402,
-      "absolute_weight": 0.015402
+      "feature": "num__matching_skills_count",
+      "coefficient": 0.016654,
+      "absolute_weight": 0.016654
     },
     {
-      "feature": "cat__task_type_snapshot_bug",
-      "coefficient": 0.011371,
-      "absolute_weight": 0.011371
-    },
-    {
-      "feature": "cat__strategy_urgency",
-      "coefficient": 0.009594,
-      "absolute_weight": 0.009594
-    },
-    {
-      "feature": "cat__task_type_snapshot_design",
-      "coefficient": 0.009085,
-      "absolute_weight": 0.009085
+      "feature": "num__workload_score",
+      "coefficient": 0.016019,
+      "absolute_weight": 0.016019
     }
   ],
   "classification_report": {
     "0": {
-      "precision": 0.8048780487804879,
+      "precision": 0.825,
       "recall": 0.75,
-      "f1-score": 0.7764705882352941,
+      "f1-score": 0.7857142857142857,
       "support": 44.0
     },
     "1": {
-      "precision": 0.7027027027027027,
-      "recall": 0.7647058823529411,
-      "f1-score": 0.7323943661971831,
+      "precision": 0.7105263157894737,
+      "recall": 0.7941176470588235,
+      "f1-score": 0.75,
       "support": 34.0
     },
-    "accuracy": 0.7564102564102564,
+    "accuracy": 0.7692307692307693,
     "macro avg": {
-      "precision": 0.7537903757415954,
-      "recall": 0.7573529411764706,
-      "f1-score": 0.7544324772162386,
+      "precision": 0.7677631578947368,
+      "recall": 0.7720588235294117,
+      "f1-score": 0.7678571428571428,
       "support": 78.0
     },
     "weighted avg": {
-      "precision": 0.7603400774132482,
-      "recall": 0.7564102564102564,
-      "f1-score": 0.7572578760648355,
+      "precision": 0.7751012145748988,
+      "recall": 0.7692307692307693,
+      "f1-score": 0.7701465201465201,
       "support": 78.0
     }
   },
-  "selection_score": 0.7928,
+  "cross_validation": {
+    "folds": 5,
+    "metrics_mean": {
+      "accuracy": 0.6991,
+      "balanced_accuracy": 0.6965,
+      "precision": 0.6669,
+      "recall": 0.6698,
+      "f1": 0.6593,
+      "roc_auc": 0.7914
+    },
+    "metrics_std": {
+      "accuracy": 0.0367,
+      "balanced_accuracy": 0.0362,
+      "precision": 0.0761,
+      "recall": 0.1068,
+      "f1": 0.0465,
+      "roc_auc": 0.0511
+    }
+  },
+  "calibration_summary": {
+    "brier_score": 0.1636,
+    "expected_calibration_error": 0.0815,
+    "buckets": [
+      {
+        "bucket": "0.0-0.2",
+        "support": 16,
+        "mean_predicted_probability": 0.1122,
+        "actual_positive_rate": 0.125,
+        "absolute_gap": 0.0128
+      },
+      {
+        "bucket": "0.2-0.4",
+        "support": 16,
+        "mean_predicted_probability": 0.3106,
+        "actual_positive_rate": 0.25,
+        "absolute_gap": 0.0606
+      },
+      {
+        "bucket": "0.4-0.6",
+        "support": 18,
+        "mean_predicted_probability": 0.5131,
+        "actual_positive_rate": 0.3333,
+        "absolute_gap": 0.1798
+      },
+      {
+        "bucket": "0.6-0.8",
+        "support": 20,
+        "mean_predicted_probability": 0.7326,
+        "actual_positive_rate": 0.7,
+        "absolute_gap": 0.0326
+      },
+      {
+        "bucket": "0.8-1.0",
+        "support": 8,
+        "mean_predicted_probability": 0.8387,
+        "actual_positive_rate": 1.0,
+        "absolute_gap": 0.1613
+      }
+    ]
+  },
+  "threshold_analysis": {
+    "default_threshold": 0.5,
+    "default_metrics": {
+      "accuracy": 0.7692,
+      "balanced_accuracy": 0.7721,
+      "precision": 0.7105,
+      "recall": 0.7941,
+      "f1": 0.75,
+      "roc_auc": 0.8449
+    },
+    "best_f1_threshold": 0.5,
+    "best_f1_metrics": {
+      "accuracy": 0.7692,
+      "balanced_accuracy": 0.7721,
+      "precision": 0.7105,
+      "recall": 0.7941,
+      "f1": 0.75,
+      "roc_auc": 0.8449
+    },
+    "best_balanced_threshold": 0.65,
+    "best_balanced_metrics": {
+      "accuracy": 0.7949,
+      "balanced_accuracy": 0.7781,
+      "precision": 0.8462,
+      "recall": 0.6471,
+      "f1": 0.7333,
+      "roc_auc": 0.8449
+    },
+    "grid": [
+      {
+        "threshold": 0.3,
+        "metrics": {
+          "accuracy": 0.6667,
+          "balanced_accuracy": 0.6979,
+          "precision": 0.5714,
+          "recall": 0.9412,
+          "f1": 0.7111,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.35,
+        "metrics": {
+          "accuracy": 0.6923,
+          "balanced_accuracy": 0.7139,
+          "precision": 0.6,
+          "recall": 0.8824,
+          "f1": 0.7143,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.4,
+        "metrics": {
+          "accuracy": 0.6923,
+          "balanced_accuracy": 0.7072,
+          "precision": 0.6087,
+          "recall": 0.8235,
+          "f1": 0.7,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.45,
+        "metrics": {
+          "accuracy": 0.7308,
+          "balanced_accuracy": 0.738,
+          "precision": 0.6585,
+          "recall": 0.7941,
+          "f1": 0.72,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.5,
+        "metrics": {
+          "accuracy": 0.7692,
+          "balanced_accuracy": 0.7721,
+          "precision": 0.7105,
+          "recall": 0.7941,
+          "f1": 0.75,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.55,
+        "metrics": {
+          "accuracy": 0.7692,
+          "balanced_accuracy": 0.7687,
+          "precision": 0.7222,
+          "recall": 0.7647,
+          "f1": 0.7429,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.6,
+        "metrics": {
+          "accuracy": 0.7692,
+          "balanced_accuracy": 0.7553,
+          "precision": 0.7857,
+          "recall": 0.6471,
+          "f1": 0.7097,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.65,
+        "metrics": {
+          "accuracy": 0.7949,
+          "balanced_accuracy": 0.7781,
+          "precision": 0.8462,
+          "recall": 0.6471,
+          "f1": 0.7333,
+          "roc_auc": 0.8449
+        }
+      },
+      {
+        "threshold": 0.7,
+        "metrics": {
+          "accuracy": 0.7949,
+          "balanced_accuracy": 0.7714,
+          "precision": 0.9091,
+          "recall": 0.5882,
+          "f1": 0.7143,
+          "roc_auc": 0.8449
+        }
+      }
+    ]
+  },
+  "segment_performance": {
+    "by_strategy": [
+      {
+        "label": "balance",
+        "support": 38,
+        "positive_rate": 0.4474,
+        "metrics": {
+          "accuracy": 0.7895,
+          "balanced_accuracy": 0.7927,
+          "precision": 0.7368,
+          "recall": 0.8235,
+          "f1": 0.7778,
+          "roc_auc": 0.8908
+        }
+      },
+      {
+        "label": "urgency",
+        "support": 25,
+        "positive_rate": 0.28,
+        "metrics": {
+          "accuracy": 0.72,
+          "balanced_accuracy": 0.6746,
+          "precision": 0.5,
+          "recall": 0.5714,
+          "f1": 0.5333,
+          "roc_auc": 0.7222
+        }
+      },
+      {
+        "label": "learning",
+        "support": 11,
+        "positive_rate": 0.7273,
+        "metrics": {
+          "accuracy": 0.8182,
+          "balanced_accuracy": 0.7708,
+          "precision": 0.875,
+          "recall": 0.875,
+          "f1": 0.875,
+          "roc_auc": 0.875
+        }
+      }
+    ],
+    "by_source": [
+      {
+        "label": "historical_backfill",
+        "support": 62,
+        "positive_rate": 0.3387,
+        "metrics": {
+          "accuracy": 0.7581,
+          "balanced_accuracy": 0.7358,
+          "precision": 0.6364,
+          "recall": 0.6667,
+          "f1": 0.6512,
+          "roc_auc": 0.8026
+        }
+      },
+      {
+        "label": "benchmark_batch",
+        "support": 16,
+        "positive_rate": 0.8125,
+        "metrics": {
+          "accuracy": 0.8125,
+          "balanced_accuracy": 0.5,
+          "precision": 0.8125,
+          "recall": 1.0,
+          "f1": 0.8966,
+          "roc_auc": 0.7692
+        }
+      }
+    ],
+    "by_task_type": [
+      {
+        "label": "documentation",
+        "support": 18,
+        "positive_rate": 0.3333,
+        "metrics": {
+          "accuracy": 0.8889,
+          "balanced_accuracy": 0.9167,
+          "precision": 0.75,
+          "recall": 1.0,
+          "f1": 0.8571,
+          "roc_auc": 1.0
+        }
+      },
+      {
+        "label": "design",
+        "support": 17,
+        "positive_rate": 0.3529,
+        "metrics": {
+          "accuracy": 0.7059,
+          "balanced_accuracy": 0.7348,
+          "precision": 0.5556,
+          "recall": 0.8333,
+          "f1": 0.6667,
+          "roc_auc": 0.6667
+        }
+      },
+      {
+        "label": "bug",
+        "support": 10,
+        "positive_rate": 0.4,
+        "metrics": {
+          "accuracy": 0.7,
+          "balanced_accuracy": 0.625,
+          "precision": 1.0,
+          "recall": 0.25,
+          "f1": 0.4,
+          "roc_auc": 0.6667
+        }
+      },
+      {
+        "label": "operations",
+        "support": 9,
+        "positive_rate": 0.4444,
+        "metrics": {
+          "accuracy": 0.6667,
+          "balanced_accuracy": 0.675,
+          "precision": 0.6,
+          "recall": 0.75,
+          "f1": 0.6667,
+          "roc_auc": 0.8
+        }
+      },
+      {
+        "label": "feature",
+        "support": 8,
+        "positive_rate": 0.625,
+        "metrics": {
+          "accuracy": 0.75,
+          "balanced_accuracy": 0.6667,
+          "precision": 0.7143,
+          "recall": 1.0,
+          "f1": 0.8333,
+          "roc_auc": 0.7333
+        }
+      },
+      {
+        "label": "marketing",
+        "support": 6,
+        "positive_rate": 0.5,
+        "metrics": {
+          "accuracy": 0.6667,
+          "balanced_accuracy": 0.6667,
+          "precision": 1.0,
+          "recall": 0.3333,
+          "f1": 0.5,
+          "roc_auc": 0.8889
+        }
+      },
+      {
+        "label": "improvement",
+        "support": 5,
+        "positive_rate": 0.6,
+        "metrics": {
+          "accuracy": 1.0,
+          "balanced_accuracy": 1.0,
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "roc_auc": 1.0
+        }
+      },
+      {
+        "label": "research",
+        "support": 5,
+        "positive_rate": 0.6,
+        "metrics": {
+          "accuracy": 0.8,
+          "balanced_accuracy": 0.75,
+          "precision": 0.75,
+          "recall": 1.0,
+          "f1": 0.8571,
+          "roc_auc": 1.0
+        }
+      }
+    ]
+  },
+  "segment_robustness_summary": {
+    "weak_segments": {
+      "strategy": [],
+      "source": [
+        "benchmark_batch"
+      ],
+      "task_type": [
+        "design",
+        "bug"
+      ]
+    },
+    "stable_segments": {
+      "strategy": [
+        "balance",
+        "learning"
+      ],
+      "source": [
+        "historical_backfill"
+      ],
+      "task_type": [
+        "documentation"
+      ]
+    },
+    "strategy_thresholds": {
+      "balance": 0.48,
+      "efficiency": 0.53,
+      "urgency": 0.61,
+      "learning": 0.53
+    }
+  },
+  "strategy_thresholds": {
+    "balance": 0.48,
+    "efficiency": 0.53,
+    "urgency": 0.61,
+    "learning": 0.53
+  },
+  "evaluation_notes": [
+    "El desempeño en validación cruzada es inferior al holdout; revisar estabilidad del modelo.",
+    "Hay segmentos débiles en source; revisar cobertura y balance local."
+  ],
+  "selection_score": 0.7687,
   "candidate_models": [
     {
       "model_name": "RandomForest",
-      "selection_score": 0.7928,
+      "selection_score": 0.7687,
       "metrics": {
-        "accuracy": 0.7564,
-        "balanced_accuracy": 0.7574,
-        "precision": 0.7027,
-        "recall": 0.7647,
-        "f1": 0.7324,
-        "roc_auc": 0.8382
-      }
-    },
-    {
-      "model_name": "LogisticRegression",
-      "selection_score": 0.7627,
-      "metrics": {
-        "accuracy": 0.7564,
-        "balanced_accuracy": 0.7574,
-        "precision": 0.7027,
-        "recall": 0.7647,
-        "f1": 0.7324,
-        "roc_auc": 0.7781
-      }
-    },
-    {
-      "model_name": "HistGradientBoosting",
-      "selection_score": 0.761,
-      "metrics": {
-        "accuracy": 0.7436,
-        "balanced_accuracy": 0.736,
-        "precision": 0.7188,
-        "recall": 0.6765,
-        "f1": 0.697,
-        "roc_auc": 0.8108
-      }
+        "accuracy": 0.7692,
+        "balanced_accuracy": 0.7721,
+        "precision": 0.7105,
+        "recall": 0.7941,
+        "f1": 0.75,
+        "roc_auc": 0.8449
+      },
+      "cross_validation_mean": {
+        "accuracy": 0.6991,
+        "balanced_accuracy": 0.6965,
+        "precision": 0.6669,
+        "recall": 0.6698,
+        "f1": 0.6593,
+        "roc_auc": 0.7914
+      },
+      "brier_score": 0.1636,
+      "weak_strategy_segments": []
     },
     {
       "model_name": "ExtraTrees",
-      "selection_score": 0.7415,
+      "selection_score": 0.756,
       "metrics": {
-        "accuracy": 0.6923,
-        "balanced_accuracy": 0.6939,
-        "precision": 0.6316,
-        "recall": 0.7059,
-        "f1": 0.6667,
-        "roc_auc": 0.7995
-      }
+        "accuracy": 0.7308,
+        "balanced_accuracy": 0.7346,
+        "precision": 0.6667,
+        "recall": 0.7647,
+        "f1": 0.7123,
+        "roc_auc": 0.8195
+      },
+      "cross_validation_mean": {
+        "accuracy": 0.7057,
+        "balanced_accuracy": 0.7042,
+        "precision": 0.6652,
+        "recall": 0.6852,
+        "f1": 0.6695,
+        "roc_auc": 0.7703
+      },
+      "brier_score": 0.1762,
+      "weak_strategy_segments": []
+    },
+    {
+      "model_name": "LogisticRegression",
+      "selection_score": 0.7557,
+      "metrics": {
+        "accuracy": 0.7564,
+        "balanced_accuracy": 0.7574,
+        "precision": 0.7027,
+        "recall": 0.7647,
+        "f1": 0.7324,
+        "roc_auc": 0.7774
+      },
+      "cross_validation_mean": {
+        "accuracy": 0.7088,
+        "balanced_accuracy": 0.704,
+        "precision": 0.6739,
+        "recall": 0.6624,
+        "f1": 0.6643,
+        "roc_auc": 0.7666
+      },
+      "brier_score": 0.198,
+      "weak_strategy_segments": [
+        "urgency"
+      ]
     }
   ],
-  "champion_score": 0.8928,
-  "champion_variant_key": "compact_cleaned",
-  "champion_variant_label": "Compacto limpio"
+  "promoted": true,
+  "promotion_reason": "modelo_guardado",
+  "previous_active_selection_score": 0.7792,
+  "previous_active_model_type": "RandomForest",
+  "previous_active_training_variant": "compact_cleaned_history",
+  "current_active_selection_score": 0.7687,
+  "candidate_selection_score": 0.7687,
+  "current_active_model_type": "RandomForest",
+  "current_active_training_variant": "compact_cleaned_history",
+  "active_model_synced": true
 }

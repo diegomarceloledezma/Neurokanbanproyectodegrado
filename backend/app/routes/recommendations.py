@@ -1,16 +1,10 @@
-from typing import Set
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.models import Project, ProjectMember, Task, User
+from app.models import User
 from app.routes.auth import get_current_user, has_any_role
-from app.schemas import (
-    TaskInsightResponse,
-    TaskRecommendationResponse,
-    TaskSimulationResponse,
-)
+from app.schemas import TaskInsightResponse
 from app.services.recommendation_engine import (
     ALLOWED_MODES,
     ALLOWED_STRATEGIES,
@@ -23,7 +17,9 @@ from app.services.task_insights_service import build_task_insight_response
 router = APIRouter(prefix="/recommendations", tags=["Recommendations"])
 
 
-def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
+def _get_accessible_project_ids(db: Session, current_user: User) -> set[int]:
+    from app.models import Project, ProjectMember
+
     if has_any_role(current_user, "admin"):
         rows = db.query(Project.id).all()
         return {int(project_id) for (project_id,) in rows}
@@ -46,22 +42,32 @@ def _get_accessible_project_ids(db: Session, current_user: User) -> Set[int]:
     return project_ids
 
 
-def _validate_task_access(db: Session, task: Task, current_user: User) -> None:
+def _validate_task_access(db: Session, task, current_user: User) -> None:
     if has_any_role(current_user, "admin"):
         return
 
-    if not has_any_role(current_user, "leader"):
-        raise HTTPException(
-            status_code=403,
-            detail="No tienes permisos para usar recomendaciones inteligentes",
-        )
-
     accessible_project_ids = _get_accessible_project_ids(db, current_user)
-    if task.project_id not in accessible_project_ids:
-        raise HTTPException(
-            status_code=403,
-            detail="No tienes permisos para acceder a esa tarea",
-        )
+
+    if has_any_role(current_user, "leader"):
+        if task.project_id not in accessible_project_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para acceder a esa tarea",
+            )
+        return
+
+    if has_any_role(current_user, "member"):
+        if task.project_id not in accessible_project_ids:
+            raise HTTPException(
+                status_code=403,
+                detail="No tienes permisos para acceder a esa tarea",
+            )
+        return
+
+    raise HTTPException(
+        status_code=403,
+        detail="No tienes permisos para usar recomendaciones inteligentes",
+    )
 
 
 def _validate_strategy_and_mode(strategy: str, mode: str) -> None:
@@ -78,7 +84,7 @@ def _validate_strategy_and_mode(strategy: str, mode: str) -> None:
         )
 
 
-@router.get("/tasks/{task_id}", response_model=TaskRecommendationResponse)
+@router.get("/tasks/{task_id}")
 def get_task_recommendations(
     task_id: int,
     strategy: str = Query(default="balance"),
@@ -104,7 +110,7 @@ def get_task_recommendations(
     return response
 
 
-@router.get("/tasks/{task_id}/simulation", response_model=TaskSimulationResponse)
+@router.get("/tasks/{task_id}/simulation")
 def get_task_simulation(
     task_id: int,
     strategy: str = Query(default="balance"),

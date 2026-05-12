@@ -5,41 +5,33 @@ from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import (
-    ExtraTreesClassifier,
-    HistGradientBoostingClassifier,
-    RandomForestClassifier,
-)
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
+    brier_score_loss,
     classification_report,
     f1_score,
     precision_score,
     recall_score,
     roc_auc_score,
 )
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sqlalchemy.orm import Session
-
-from app.models import Project, Task, TaskAssignmentHistory, TaskOutcome
-from app.services.training_dataset_service import (
-    build_clean_training_dataset_rows,
-    build_recalibrated_training_dataset_rows,
-    build_trusted_training_dataset_rows,
-)
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "ml_artifacts"
 MODEL_PATH = ARTIFACTS_DIR / "baseline_success_model.joblib"
 METADATA_PATH = ARTIFACTS_DIR / "baseline_success_model_metadata.json"
 
-NUMERIC_FEATURES_FULL = [
+NUMERIC_FEATURES_CORE = [
     "recommendation_score",
     "workload_score",
     "skill_match_score",
@@ -53,6 +45,9 @@ NUMERIC_FEATURES_FULL = [
     "matching_ratio",
     "estimated_hours_snapshot",
     "complexity_snapshot",
+]
+
+NUMERIC_FEATURES_HISTORY = [
     "historical_tasks_with_outcome",
     "historical_success_rate",
     "historical_avg_success_score",
@@ -66,7 +61,12 @@ NUMERIC_FEATURES_FULL = [
     "recent_5_success_rate",
 ]
 
-CATEGORICAL_FEATURES_FULL = [
+CATEGORICAL_FEATURES_BASE = [
+    "strategy",
+    "priority_snapshot",
+]
+
+CATEGORICAL_FEATURES_EXTENDED = [
     "source",
     "strategy",
     "priority_snapshot",
@@ -74,141 +74,91 @@ CATEGORICAL_FEATURES_FULL = [
     "snapshot_quality",
 ]
 
-NUMERIC_FEATURES_COMPACT = [
-    "recommendation_score",
-    "skill_match_score",
-    "performance_score",
-    "current_load_snapshot",
-    "required_skills_count",
-    "matching_ratio",
-    "estimated_hours_snapshot",
-    "complexity_snapshot",
-    "historical_tasks_with_outcome",
-    "historical_success_rate",
-    "historical_avg_success_score",
-    "historical_on_time_rate",
-    "historical_quality_index",
-    "historical_no_rework_rate",
-    "same_task_type_success_rate",
-    "same_priority_success_rate",
-    "recent_5_success_rate",
-]
+WEAK_SEGMENT_BOOSTS = {
+    "strategy": {
+        "urgency": 1.35,
+        "learning": 1.10,
+    },
+    "source": {
+        "benchmark_batch": 1.30,
+    },
+    "task_type": {
+        "bug": 1.35,
+        "design": 1.15,
+    },
+}
 
-CATEGORICAL_FEATURES_COMPACT = [
-    "strategy",
-    "priority_snapshot",
-    "task_type_snapshot",
-    "snapshot_quality",
-]
-
-NUMERIC_FEATURES_SOURCE_AWARE = [
-    "recommendation_score",
-    "workload_score",
-    "skill_match_score",
-    "availability_score",
-    "performance_score",
-    "current_load_snapshot",
-    "availability_snapshot",
-    "required_skills_count",
-    "matching_ratio",
-    "estimated_hours_snapshot",
-    "complexity_snapshot",
-    "historical_tasks_with_outcome",
-    "historical_success_rate",
-    "historical_avg_success_score",
-    "historical_on_time_rate",
-    "historical_quality_index",
-    "historical_no_rework_rate",
-    "same_task_type_history_count",
-    "same_task_type_success_rate",
-    "same_priority_history_count",
-    "same_priority_success_rate",
-    "recent_5_success_rate",
-]
-
-CATEGORICAL_FEATURES_SOURCE_AWARE = [
-    "source",
-    "strategy",
-    "priority_snapshot",
-    "task_type_snapshot",
-    "snapshot_quality",
-]
-
-MIN_TEST_ROWS_FOR_CHAMPION = 40
-MIN_ROC_AUC_FOR_CHAMPION = 0.70
-MIN_BALANCED_ACCURACY_FOR_CHAMPION = 0.66
+DEFAULT_STRATEGY_THRESHOLDS = {
+    "balance": 0.50,
+    "efficiency": 0.53,
+    "urgency": 0.58,
+    "learning": 0.55,
+}
 
 
 def _ensure_artifacts_dir() -> None:
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _safe_float(value: Any) -> float | None:
+def _safe_float(value: Any, default: float = 0.0) -> float:
     if value is None:
-        return None
+        return default
     try:
         return float(value)
     except Exception:
-        return None
+        return default
 
 
-def _safe_int(value: Any) -> int | None:
+def _safe_int(value: Any, default: int = 0) -> int:
     if value is None:
-        return None
+        return default
     try:
         return int(value)
     except Exception:
-        return None
+        return default
 
 
-def _compute_success_score_from_outcome(
-    *,
-    finished_on_time: bool | None,
-    delay_hours: float | None,
-    quality_score: int | None,
-    had_rework: bool | None,
-) -> float:
-    score = 0.0
-
-    if finished_on_time:
-        score += 35
-    else:
-        delay = float(delay_hours or 0.0)
-        score += max(0.0, 15 - delay * 1.8)
-
-    quality = int(quality_score or 0)
-    score += quality * 12
-
-    if had_rework:
-        score -= 8
-    else:
-        score += 10
-
-    return round(max(0.0, min(100.0, score)), 2)
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(value, high))
 
 
-def _compute_success_label(success_score: float) -> int:
-    return 1 if float(success_score) >= 65.0 else 0
+def _json_ready(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _json_ready(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
 
 
 def _get_feature_sets(training_variant: str) -> tuple[list[str], list[str]]:
-    if training_variant == "compact_cleaned_history":
-        return NUMERIC_FEATURES_COMPACT, CATEGORICAL_FEATURES_COMPACT
+    base_numeric = list(NUMERIC_FEATURES_CORE)
+    history_numeric = list(NUMERIC_FEATURES_HISTORY)
 
     if training_variant in {
+        "compact_cleaned_history",
         "trusted_source_aware_history",
         "recalibrated_source_aware_history",
     }:
-        return NUMERIC_FEATURES_SOURCE_AWARE, CATEGORICAL_FEATURES_SOURCE_AWARE
+        numeric_features = base_numeric + history_numeric
+        categorical_features = list(CATEGORICAL_FEATURES_EXTENDED)
+        return numeric_features, categorical_features
 
-    return NUMERIC_FEATURES_FULL, CATEGORICAL_FEATURES_FULL
+    return base_numeric, list(CATEGORICAL_FEATURES_BASE)
 
 
 def _probability_confidence_band(probability: float | None) -> str:
     if probability is None:
         return "sin_modelo"
 
-    prob = max(0.0, min(1.0, float(probability)))
+    prob = _clamp(float(probability), 0.0, 1.0)
     distance = abs(prob - 0.5)
 
     if distance >= 0.30:
@@ -216,117 +166,6 @@ def _probability_confidence_band(probability: float | None) -> str:
     if distance >= 0.15:
         return "media"
     return "baja"
-
-
-def _class_balance_from_series(y: pd.Series) -> dict[str, Any]:
-    if y.empty:
-        return {
-            "negative_count": 0,
-            "positive_count": 0,
-            "minority_ratio_percent": 0.0,
-            "assessment": "sin_datos",
-        }
-
-    negatives = int((y == 0).sum())
-    positives = int((y == 1).sum())
-    minority = min(negatives, positives)
-    total = len(y)
-    minority_ratio = round((minority / total) * 100, 2) if total > 0 else 0.0
-
-    if minority_ratio >= 35:
-        assessment = "alto"
-    elif minority_ratio >= 20:
-        assessment = "medio"
-    else:
-        assessment = "bajo"
-
-    return {
-        "negative_count": negatives,
-        "positive_count": positives,
-        "minority_ratio_percent": minority_ratio,
-        "assessment": assessment,
-    }
-
-
-def fetch_training_dataframe(db: Session, project_id: int | None = None) -> pd.DataFrame:
-    query = (
-        db.query(TaskAssignmentHistory, TaskOutcome, Task)
-        .join(Task, Task.id == TaskAssignmentHistory.task_id)
-        .join(TaskOutcome, TaskOutcome.task_id == Task.id)
-    )
-
-    if project_id is not None:
-        query = query.filter(Task.project_id == project_id)
-
-    rows = query.order_by(TaskAssignmentHistory.id.asc()).all()
-
-    data: list[dict[str, Any]] = []
-    for decision, outcome, task in rows:
-        stored_success_score = _safe_float(outcome.success_score)
-
-        finished_on_time = outcome.finished_on_time
-        delay_hours = _safe_float(outcome.delay_hours) or 0.0
-        quality_score = _safe_int(outcome.quality_score) or 0
-        had_rework = bool(outcome.had_rework)
-
-        success_score = (
-            stored_success_score
-            if stored_success_score is not None
-            else _compute_success_score_from_outcome(
-                finished_on_time=finished_on_time,
-                delay_hours=delay_hours,
-                quality_score=quality_score,
-                had_rework=had_rework,
-            )
-        )
-
-        success_label = _compute_success_label(success_score)
-
-        data.append(
-            {
-                "assignment_decision_id": decision.id,
-                "task_id": task.id,
-                "project_id": task.project_id,
-                "assigned_to": decision.assigned_to,
-                "source": decision.source or "manual",
-                "strategy": decision.strategy or "balance",
-                "priority_snapshot": decision.priority_snapshot or task.priority or "medium",
-                "task_type_snapshot": task.task_type or "other",
-                "snapshot_quality": "original",
-                "recommendation_score": _safe_float(decision.recommendation_score),
-                "workload_score": _safe_float(decision.workload_score),
-                "skill_match_score": _safe_float(decision.skill_match_score),
-                "availability_score": _safe_float(decision.availability_score),
-                "performance_score": _safe_float(decision.performance_score),
-                "current_load_snapshot": _safe_float(decision.current_load_snapshot),
-                "availability_snapshot": _safe_float(decision.availability_snapshot),
-                "active_tasks_snapshot": _safe_int(decision.active_tasks_snapshot),
-                "required_skills_count": _safe_int(decision.required_skills_count),
-                "matching_skills_count": _safe_int(decision.matching_skills_count),
-                "matching_ratio": _safe_float(decision.matching_ratio),
-                "estimated_hours_snapshot": _safe_float(decision.estimated_hours_snapshot),
-                "complexity_snapshot": _safe_int(decision.complexity_snapshot),
-                "historical_tasks_with_outcome": 0,
-                "historical_success_rate": 50.0,
-                "historical_avg_success_score": 60.0,
-                "historical_on_time_rate": 50.0,
-                "historical_quality_index": 60.0,
-                "historical_no_rework_rate": 50.0,
-                "same_task_type_history_count": 0,
-                "same_task_type_success_rate": 50.0,
-                "same_priority_history_count": 0,
-                "same_priority_success_rate": 50.0,
-                "recent_5_success_rate": 50.0,
-                "finished_on_time": finished_on_time,
-                "delay_hours": delay_hours,
-                "quality_score": quality_score,
-                "had_rework": had_rework,
-                "success_score": success_score,
-                "success_label": success_label,
-            }
-        )
-
-    return pd.DataFrame(data)
 
 
 def _build_preprocessor(
@@ -344,7 +183,7 @@ def _build_preprocessor(
     categorical_transformer = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="most_frequent")),
-            ("onehot", OneHotEncoder(handle_unknown="ignore", sparse_output=False)),
+            ("onehot", OneHotEncoder(handle_unknown="ignore")),
         ]
     )
 
@@ -358,52 +197,14 @@ def _build_preprocessor(
 
 def _build_pipeline(
     *,
-    model_name: str,
     numeric_features: list[str],
     categorical_features: list[str],
-    random_state: int,
+    classifier,
 ) -> Pipeline:
     preprocessor = _build_preprocessor(
         numeric_features=numeric_features,
         categorical_features=categorical_features,
     )
-
-    if model_name == "LogisticRegression":
-        classifier = LogisticRegression(
-            max_iter=2500,
-            class_weight="balanced",
-            solver="liblinear",
-            random_state=random_state,
-        )
-    elif model_name == "RandomForest":
-        classifier = RandomForestClassifier(
-            n_estimators=450,
-            max_depth=None,
-            min_samples_leaf=2,
-            max_features="sqrt",
-            class_weight="balanced",
-            random_state=random_state,
-            n_jobs=-1,
-        )
-    elif model_name == "ExtraTrees":
-        classifier = ExtraTreesClassifier(
-            n_estimators=500,
-            max_depth=None,
-            min_samples_leaf=2,
-            max_features="sqrt",
-            class_weight="balanced",
-            random_state=random_state,
-            n_jobs=-1,
-        )
-    elif model_name == "HistGradientBoosting":
-        classifier = HistGradientBoostingClassifier(
-            max_depth=6,
-            learning_rate=0.05,
-            max_iter=320,
-            random_state=random_state,
-        )
-    else:
-        raise ValueError(f"Modelo no soportado: {model_name}")
 
     return Pipeline(
         steps=[
@@ -413,27 +214,73 @@ def _build_pipeline(
     )
 
 
+def _candidate_classifiers() -> list[tuple[str, Any]]:
+    return [
+        (
+            "RandomForest",
+            RandomForestClassifier(
+                n_estimators=320,
+                max_depth=10,
+                min_samples_leaf=2,
+                class_weight="balanced_subsample",
+                random_state=42,
+                n_jobs=-1,
+            ),
+        ),
+        (
+            "ExtraTrees",
+            ExtraTreesClassifier(
+                n_estimators=360,
+                max_depth=12,
+                min_samples_leaf=2,
+                class_weight="balanced_subsample",
+                random_state=42,
+                n_jobs=-1,
+            ),
+        ),
+        (
+            "LogisticRegression",
+            LogisticRegression(
+                max_iter=2000,
+                class_weight="balanced",
+                solver="liblinear",
+                random_state=42,
+            ),
+        ),
+    ]
+
+
 def _extract_feature_importance(model: Pipeline) -> list[dict[str, float]]:
     preprocessor: ColumnTransformer = model.named_steps["preprocessor"]
     classifier = model.named_steps["classifier"]
-    feature_names = list(preprocessor.get_feature_names_out())
 
-    if hasattr(classifier, "coef_"):
-        weights = classifier.coef_[0]
-    elif hasattr(classifier, "feature_importances_"):
-        weights = classifier.feature_importances_
-    else:
+    try:
+        feature_names = list(preprocessor.get_feature_names_out())
+    except Exception:
         return []
 
-    rows = []
-    for name, weight in zip(feature_names, weights):
-        rows.append(
-            {
-                "feature": name,
-                "coefficient": round(float(weight), 6),
-                "absolute_weight": round(abs(float(weight)), 6),
-            }
-        )
+    rows: list[dict[str, float]] = []
+
+    if hasattr(classifier, "feature_importances_"):
+        importances = getattr(classifier, "feature_importances_")
+        for name, importance in zip(feature_names, importances):
+            rows.append(
+                {
+                    "feature": name,
+                    "coefficient": round(float(importance), 6),
+                    "absolute_weight": round(abs(float(importance)), 6),
+                }
+            )
+    elif hasattr(classifier, "coef_"):
+        coefficients = classifier.coef_[0]
+        for name, coef in zip(feature_names, coefficients):
+            rows.append(
+                {
+                    "feature": name,
+                    "coefficient": round(float(coef), 6),
+                    "absolute_weight": round(abs(float(coef)), 6),
+                }
+            )
 
     rows.sort(key=lambda item: item["absolute_weight"], reverse=True)
     return rows[:20]
@@ -447,31 +294,900 @@ def _build_sample_weights(X_train: pd.DataFrame, y_train: pd.Series) -> list[flo
         if "source" in X_train.columns
         else {}
     )
+    task_type_counts = (
+        X_train["task_type_snapshot"].fillna("NO_DEFINIDO").value_counts().to_dict()
+        if "task_type_snapshot" in X_train.columns
+        else {}
+    )
 
     total_rows = len(X_train)
     total_classes = max(len(class_counts), 1)
     total_strategies = max(len(strategy_counts), 1)
     total_sources = max(len(source_counts), 1) if source_counts else 1
+    total_task_types = max(len(task_type_counts), 1) if task_type_counts else 1
 
     weights: list[float] = []
 
     for idx in X_train.index:
         row_class = int(y_train.loc[idx])
-        row_strategy = X_train.loc[idx, "strategy"] if pd.notna(X_train.loc[idx, "strategy"]) else "NO_DEFINIDO"
+        row_strategy = (
+            X_train.loc[idx, "strategy"]
+            if pd.notna(X_train.loc[idx, "strategy"])
+            else "NO_DEFINIDO"
+        )
+        row_source = (
+            X_train.loc[idx, "source"]
+            if "source" in X_train.columns and pd.notna(X_train.loc[idx, "source"])
+            else "NO_DEFINIDO"
+        )
+        row_task_type = (
+            X_train.loc[idx, "task_type_snapshot"]
+            if "task_type_snapshot" in X_train.columns and pd.notna(X_train.loc[idx, "task_type_snapshot"])
+            else "NO_DEFINIDO"
+        )
 
         class_weight = total_rows / (total_classes * class_counts.get(row_class, 1))
-        strategy_weight = total_rows / (total_strategies * strategy_counts.get(row_strategy, 1))
+        strategy_weight = total_rows / (
+            total_strategies * strategy_counts.get(row_strategy, 1)
+        )
+        source_weight = (
+            total_rows / (total_sources * source_counts.get(row_source, 1))
+            if source_counts
+            else 1.0
+        )
+        task_type_weight = (
+            total_rows / (total_task_types * task_type_counts.get(row_task_type, 1))
+            if task_type_counts
+            else 1.0
+        )
 
-        if source_counts:
-            row_source = X_train.loc[idx, "source"] if pd.notna(X_train.loc[idx, "source"]) else "NO_DEFINIDO"
-            source_weight = total_rows / (total_sources * source_counts.get(row_source, 1))
-            final_weight = (class_weight * 0.48) + (strategy_weight * 0.18) + (source_weight * 0.34)
-        else:
-            final_weight = (class_weight * 0.70) + (strategy_weight * 0.30)
+        final_weight = (
+            (class_weight * 0.52)
+            + (strategy_weight * 0.20)
+            + (source_weight * 0.14)
+            + (task_type_weight * 0.14)
+        )
+
+        final_weight *= WEAK_SEGMENT_BOOSTS["strategy"].get(str(row_strategy), 1.0)
+        final_weight *= WEAK_SEGMENT_BOOSTS["source"].get(str(row_source), 1.0)
+        final_weight *= WEAK_SEGMENT_BOOSTS["task_type"].get(str(row_task_type), 1.0)
 
         weights.append(float(final_weight))
 
     return weights
+
+
+def _binary_metrics(y_true, y_pred, y_prob) -> dict[str, float]:
+    metrics: dict[str, float] = {
+        "accuracy": round(float(accuracy_score(y_true, y_pred)), 4),
+        "balanced_accuracy": round(float(balanced_accuracy_score(y_true, y_pred)), 4),
+        "precision": round(float(precision_score(y_true, y_pred, zero_division=0)), 4),
+        "recall": round(float(recall_score(y_true, y_pred, zero_division=0)), 4),
+        "f1": round(float(f1_score(y_true, y_pred, zero_division=0)), 4),
+    }
+
+    try:
+        metrics["roc_auc"] = round(float(roc_auc_score(y_true, y_prob)), 4)
+    except Exception:
+        metrics["roc_auc"] = 0.0
+
+    return metrics
+
+
+def _metrics_at_threshold(y_true, y_prob, threshold: float) -> dict[str, float]:
+    y_pred = (np.array(y_prob) >= threshold).astype(int)
+    return _binary_metrics(y_true, y_pred, y_prob)
+
+
+def _threshold_analysis(y_true, y_prob) -> dict[str, Any]:
+    thresholds = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
+    evaluations: list[dict[str, Any]] = []
+
+    best_f1_item = None
+    best_balanced_item = None
+
+    for threshold in thresholds:
+        metrics = _metrics_at_threshold(y_true, y_prob, threshold)
+        item = {
+            "threshold": round(float(threshold), 2),
+            "metrics": metrics,
+        }
+        evaluations.append(item)
+
+        if best_f1_item is None or metrics["f1"] > best_f1_item["metrics"]["f1"]:
+            best_f1_item = item
+
+        if (
+            best_balanced_item is None
+            or metrics["balanced_accuracy"]
+            > best_balanced_item["metrics"]["balanced_accuracy"]
+        ):
+            best_balanced_item = item
+
+    return {
+        "default_threshold": 0.5,
+        "default_metrics": next(
+            item["metrics"] for item in evaluations if item["threshold"] == 0.5
+        ),
+        "best_f1_threshold": best_f1_item["threshold"] if best_f1_item else 0.5,
+        "best_f1_metrics": best_f1_item["metrics"] if best_f1_item else {},
+        "best_balanced_threshold": (
+            best_balanced_item["threshold"] if best_balanced_item else 0.5
+        ),
+        "best_balanced_metrics": (
+            best_balanced_item["metrics"] if best_balanced_item else {}
+        ),
+        "grid": evaluations,
+    }
+
+
+def _calibration_summary(y_true, y_prob) -> dict[str, Any]:
+    y_true_arr = np.array(y_true, dtype=int)
+    y_prob_arr = np.array(y_prob, dtype=float)
+
+    try:
+        brier = round(float(brier_score_loss(y_true_arr, y_prob_arr)), 4)
+    except Exception:
+        brier = None
+
+    bins = np.linspace(0.0, 1.0, 6)
+    bucket_rows: list[dict[str, Any]] = []
+    calibration_error = 0.0
+    total = max(len(y_true_arr), 1)
+
+    for start, end in zip(bins[:-1], bins[1:]):
+        if end >= 1.0:
+            mask = (y_prob_arr >= start) & (y_prob_arr <= end)
+        else:
+            mask = (y_prob_arr >= start) & (y_prob_arr < end)
+
+        indices = np.where(mask)[0]
+        support = len(indices)
+        if support == 0:
+            continue
+
+        bucket_probs = y_prob_arr[indices]
+        bucket_true = y_true_arr[indices]
+
+        mean_pred = float(bucket_probs.mean())
+        actual_rate = float(bucket_true.mean())
+        gap = abs(mean_pred - actual_rate)
+        calibration_error += gap * (support / total)
+
+        bucket_rows.append(
+            {
+                "bucket": f"{start:.1f}-{end:.1f}",
+                "support": int(support),
+                "mean_predicted_probability": round(mean_pred, 4),
+                "actual_positive_rate": round(actual_rate, 4),
+                "absolute_gap": round(gap, 4),
+            }
+        )
+
+    return {
+        "brier_score": brier,
+        "expected_calibration_error": round(float(calibration_error), 4),
+        "buckets": bucket_rows,
+    }
+
+
+def _cross_validation_summary(
+    *,
+    X: pd.DataFrame,
+    y: pd.Series,
+    numeric_features: list[str],
+    categorical_features: list[str],
+    classifier,
+    random_state: int = 42,
+) -> dict[str, Any]:
+    class_counts = y.value_counts().to_dict()
+    min_class_support = min(class_counts.values()) if class_counts else 0
+
+    if min_class_support < 2:
+        return {
+            "folds": 0,
+            "metrics_mean": {},
+            "metrics_std": {},
+        }
+
+    folds = min(5, int(min_class_support))
+    if folds < 2:
+        return {
+            "folds": 0,
+            "metrics_mean": {},
+            "metrics_std": {},
+        }
+
+    splitter = StratifiedKFold(
+        n_splits=folds,
+        shuffle=True,
+        random_state=random_state,
+    )
+
+    collected: dict[str, list[float]] = {
+        "accuracy": [],
+        "balanced_accuracy": [],
+        "precision": [],
+        "recall": [],
+        "f1": [],
+        "roc_auc": [],
+    }
+
+    for train_idx, test_idx in splitter.split(X, y):
+        X_train = X.iloc[train_idx].copy()
+        X_test = X.iloc[test_idx].copy()
+        y_train = y.iloc[train_idx].copy()
+        y_test = y.iloc[test_idx].copy()
+
+        model = _build_pipeline(
+            numeric_features=numeric_features,
+            categorical_features=categorical_features,
+            classifier=clone(classifier),
+        )
+
+        sample_weights = _build_sample_weights(X_train, y_train)
+        model.fit(X_train, y_train, classifier__sample_weight=sample_weights)
+
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1]
+
+        fold_metrics = _binary_metrics(y_test, y_pred, y_prob)
+        for key, value in fold_metrics.items():
+            collected[key].append(float(value))
+
+    metrics_mean = {
+        key: round(float(np.mean(values)), 4) if values else 0.0
+        for key, values in collected.items()
+    }
+    metrics_std = {
+        key: round(float(np.std(values)), 4) if values else 0.0
+        for key, values in collected.items()
+    }
+
+    return {
+        "folds": folds,
+        "metrics_mean": metrics_mean,
+        "metrics_std": metrics_std,
+    }
+
+
+def _segment_group_metrics(group: pd.DataFrame) -> dict[str, Any]:
+    y_true = group["actual_label"].astype(int).tolist()
+    y_prob = group["predicted_probability"].astype(float).tolist()
+    y_pred = group["predicted_label"].astype(int).tolist()
+
+    metrics = _binary_metrics(y_true, y_pred, y_prob)
+    positive_rate = round(float(np.mean(y_true)), 4) if y_true else 0.0
+
+    return {
+        "support": int(len(group)),
+        "positive_rate": positive_rate,
+        "metrics": metrics,
+    }
+
+
+def _segment_performance(
+    *,
+    X_test: pd.DataFrame,
+    y_test,
+    y_prob,
+    y_pred,
+) -> dict[str, list[dict[str, Any]]]:
+    eval_df = X_test.copy()
+    eval_df["actual_label"] = np.array(y_test).astype(int)
+    eval_df["predicted_probability"] = np.array(y_prob).astype(float)
+    eval_df["predicted_label"] = np.array(y_pred).astype(int)
+
+    output: dict[str, list[dict[str, Any]]] = {
+        "by_strategy": [],
+        "by_source": [],
+        "by_task_type": [],
+    }
+
+    segment_map = {
+        "by_strategy": "strategy",
+        "by_source": "source",
+        "by_task_type": "task_type_snapshot",
+    }
+
+    for output_key, column in segment_map.items():
+        if column not in eval_df.columns:
+            continue
+
+        rows: list[dict[str, Any]] = []
+        grouped = eval_df.groupby(column, dropna=False)
+
+        for label, group in grouped:
+            if len(group) < 5:
+                continue
+
+            metrics = _segment_group_metrics(group)
+            rows.append(
+                {
+                    "label": str(label if label not in (None, "") else "NO_DEFINIDO"),
+                    **metrics,
+                }
+            )
+
+        rows.sort(key=lambda item: item["support"], reverse=True)
+        output[output_key] = rows[:10]
+
+    return output
+
+
+def _strategy_thresholds_from_segments(segment_performance: dict[str, Any]) -> dict[str, float]:
+    thresholds = dict(DEFAULT_STRATEGY_THRESHOLDS)
+    strategy_rows = segment_performance.get("by_strategy", []) or []
+
+    for row in strategy_rows:
+        label = str(row.get("label") or "")
+        if label not in thresholds:
+            continue
+
+        metrics = row.get("metrics", {}) or {}
+        support = int(row.get("support") or 0)
+        balanced = float(metrics.get("balanced_accuracy") or 0.0)
+        roc_auc = float(metrics.get("roc_auc") or 0.0)
+
+        if support < 8:
+            thresholds[label] = round(thresholds[label] + 0.02, 2)
+            continue
+
+        if balanced < 0.60 or roc_auc < 0.68:
+            thresholds[label] = round(min(0.70, thresholds[label] + 0.05), 2)
+        elif balanced < 0.68:
+            thresholds[label] = round(min(0.68, thresholds[label] + 0.03), 2)
+        elif balanced >= 0.75 and roc_auc >= 0.78:
+            thresholds[label] = round(max(0.45, thresholds[label] - 0.02), 2)
+
+    return thresholds
+
+
+def _segment_robustness_summary(segment_performance: dict[str, Any]) -> dict[str, Any]:
+    weak_segments: dict[str, list[str]] = {
+        "strategy": [],
+        "source": [],
+        "task_type": [],
+    }
+    stable_segments: dict[str, list[str]] = {
+        "strategy": [],
+        "source": [],
+        "task_type": [],
+    }
+
+    mapping = {
+        "strategy": segment_performance.get("by_strategy", []) or [],
+        "source": segment_performance.get("by_source", []) or [],
+        "task_type": segment_performance.get("by_task_type", []) or [],
+    }
+
+    for key, rows in mapping.items():
+        for row in rows:
+            label = str(row.get("label") or "NO_DEFINIDO")
+            support = int(row.get("support") or 0)
+            metrics = row.get("metrics", {}) or {}
+            balanced = float(metrics.get("balanced_accuracy") or 0.0)
+            roc_auc = float(metrics.get("roc_auc") or 0.0)
+
+            if support >= 5 and (balanced < 0.60 or roc_auc < 0.68):
+                weak_segments[key].append(label)
+            elif support >= 8 and balanced >= 0.72 and roc_auc >= 0.75:
+                stable_segments[key].append(label)
+
+    return {
+        "weak_segments": weak_segments,
+        "stable_segments": stable_segments,
+        "strategy_thresholds": _strategy_thresholds_from_segments(segment_performance),
+    }
+
+
+def _evaluation_notes(
+    *,
+    holdout_metrics: dict[str, float],
+    cross_validation: dict[str, Any],
+    calibration_summary: dict[str, Any],
+    segment_performance: dict[str, Any],
+    segment_robustness_summary: dict[str, Any],
+) -> list[str]:
+    notes: list[str] = []
+
+    if holdout_metrics.get("roc_auc", 0.0) < 0.80:
+        notes.append("El ROC AUC todavía admite mejora para separar mejor casos exitosos y no exitosos.")
+
+    if holdout_metrics.get("balanced_accuracy", 0.0) < 0.72:
+        notes.append("La balanced accuracy aún sugiere margen de mejora en el equilibrio entre clases.")
+
+    cv_mean = cross_validation.get("metrics_mean", {})
+    cv_std = cross_validation.get("metrics_std", {})
+
+    if cv_mean:
+        if cv_mean.get("roc_auc", 0.0) + 0.0001 < holdout_metrics.get("roc_auc", 0.0) - 0.04:
+            notes.append("El desempeño en validación cruzada es inferior al holdout; revisar estabilidad del modelo.")
+
+        if cv_std.get("f1", 0.0) > 0.08:
+            notes.append("La variabilidad del F1 entre folds es moderada; conviene seguir fortaleciendo el dataset.")
+
+    brier = calibration_summary.get("brier_score")
+    ece = calibration_summary.get("expected_calibration_error")
+    if brier is not None and brier > 0.20:
+        notes.append("La calibración probabilística todavía es mejorable según el Brier Score.")
+    if ece is not None and ece > 0.12:
+        notes.append("Existen desajustes entre probabilidad predicha y tasa real en algunos buckets.")
+
+    for segment_key in ["by_strategy", "by_source", "by_task_type"]:
+        segment_rows = segment_performance.get(segment_key, [])
+        weak_segments = [
+            row
+            for row in segment_rows
+            if row["support"] >= 5 and row["metrics"].get("balanced_accuracy", 0.0) < 0.60
+        ]
+        if weak_segments:
+            notes.append(f"Hay segmentos débiles en {segment_key.replace('by_', '')}; revisar cobertura y balance local.")
+            break
+
+    weak_strategy_segments = (segment_robustness_summary.get("weak_segments", {}) or {}).get("strategy", [])
+    if weak_strategy_segments:
+        notes.append(
+            "Estrategias con robustez débil detectada: " + ", ".join(weak_strategy_segments[:3]) + "."
+        )
+
+    return notes[:7]
+
+
+def _readiness_from_diagnostics(
+    *,
+    holdout_metrics: dict[str, float],
+    cross_validation: dict[str, Any],
+    calibration_summary: dict[str, Any],
+) -> dict[str, str]:
+    roc_auc = float(holdout_metrics.get("roc_auc") or 0.0)
+    f1 = float(holdout_metrics.get("f1") or 0.0)
+    balanced = float(holdout_metrics.get("balanced_accuracy") or 0.0)
+
+    cv_mean = cross_validation.get("metrics_mean", {}) or {}
+    cv_roc_auc = float(cv_mean.get("roc_auc") or 0.0)
+    cv_f1 = float(cv_mean.get("f1") or 0.0)
+
+    brier = calibration_summary.get("brier_score")
+    brier_value = float(brier) if brier is not None else 1.0
+
+    if (
+        roc_auc >= 0.82
+        and f1 >= 0.70
+        and balanced >= 0.72
+        and cv_roc_auc >= 0.78
+        and cv_f1 >= 0.68
+        and brier_value <= 0.22
+    ):
+        return {
+            "confidence_band": "alta",
+            "recommended_usage": "produccion_supervisada",
+        }
+
+    if (
+        roc_auc >= 0.74
+        and f1 >= 0.62
+        and balanced >= 0.68
+        and cv_roc_auc >= 0.70
+        and cv_f1 >= 0.58
+    ):
+        return {
+            "confidence_band": "media",
+            "recommended_usage": "apoyo_a_decision",
+        }
+
+    return {
+        "confidence_band": "baja",
+        "recommended_usage": "solo_como_senal_complementaria",
+    }
+
+
+def _selection_score(
+    *,
+    holdout_metrics: dict[str, float],
+    cross_validation: dict[str, Any],
+    calibration_summary: dict[str, Any],
+    segment_robustness_summary: dict[str, Any],
+) -> float:
+    cv_mean = cross_validation.get("metrics_mean", {}) or {}
+    brier = calibration_summary.get("brier_score")
+    ece = calibration_summary.get("expected_calibration_error")
+
+    calibration_quality = 0.0
+    if brier is not None:
+        calibration_quality += max(0.0, 1.0 - float(brier))
+    if ece is not None:
+        calibration_quality += max(0.0, 1.0 - float(ece))
+    calibration_quality = calibration_quality / 2 if calibration_quality > 0 else 0.0
+
+    weak_segments = segment_robustness_summary.get("weak_segments", {}) or {}
+    stable_segments = segment_robustness_summary.get("stable_segments", {}) or {}
+    weak_count = sum(len(items) for items in weak_segments.values())
+    stable_count = sum(len(items) for items in stable_segments.values())
+    robustness_bonus = max(0.0, min(0.04, stable_count * 0.005))
+    robustness_penalty = max(0.0, min(0.06, weak_count * 0.01))
+
+    score = (
+        float(holdout_metrics.get("roc_auc") or 0.0) * 0.25
+        + float(holdout_metrics.get("f1") or 0.0) * 0.18
+        + float(holdout_metrics.get("balanced_accuracy") or 0.0) * 0.15
+        + float(holdout_metrics.get("accuracy") or 0.0) * 0.05
+        + float(cv_mean.get("roc_auc") or 0.0) * 0.16
+        + float(cv_mean.get("f1") or 0.0) * 0.10
+        + float(cv_mean.get("balanced_accuracy") or 0.0) * 0.06
+        + float(calibration_quality) * 0.05
+        + robustness_bonus
+        - robustness_penalty
+    )
+
+    return round(score, 4)
+
+
+def _prepare_dataframe(
+    rows: list[dict[str, Any]],
+    training_variant: str,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    df = pd.DataFrame(rows)
+
+    if df.empty:
+        raise ValueError("No hay datos suficientes para entrenar el modelo baseline")
+
+    if "success_label" not in df.columns:
+        raise ValueError("El dataset no contiene la variable objetivo success_label")
+
+    numeric_features, categorical_features = _get_feature_sets(training_variant)
+    feature_columns = numeric_features + categorical_features
+
+    for column in feature_columns:
+        if column not in df.columns:
+            df[column] = None
+
+    return df, numeric_features, categorical_features
+
+
+def _fit_single_candidate(
+    *,
+    df: pd.DataFrame,
+    numeric_features: list[str],
+    categorical_features: list[str],
+    classifier_name: str,
+    classifier,
+    project_id: int | None,
+    project_name: str | None,
+    source_name: str,
+    test_size: float,
+    random_state: int,
+    training_variant: str,
+) -> dict[str, Any]:
+    label_counts = df["success_label"].astype(int).value_counts().to_dict()
+    if len(label_counts) < 2:
+        raise ValueError("El dataset necesita ejemplos de al menos dos clases para entrenar")
+
+    feature_columns = numeric_features + categorical_features
+    X = df[feature_columns].copy()
+    y = df["success_label"].astype(int)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=test_size,
+        random_state=random_state,
+        stratify=y,
+    )
+
+    pipeline = _build_pipeline(
+        numeric_features=numeric_features,
+        categorical_features=categorical_features,
+        classifier=clone(classifier),
+    )
+
+    sample_weights = _build_sample_weights(X_train, y_train)
+    pipeline.fit(X_train, y_train, classifier__sample_weight=sample_weights)
+
+    y_pred = pipeline.predict(X_test)
+    y_prob = pipeline.predict_proba(X_test)[:, 1]
+
+    metrics = _binary_metrics(y_test, y_pred, y_prob)
+    cross_validation = _cross_validation_summary(
+        X=X,
+        y=y,
+        numeric_features=numeric_features,
+        categorical_features=categorical_features,
+        classifier=clone(classifier),
+        random_state=random_state,
+    )
+    calibration_summary = _calibration_summary(y_test, y_prob)
+    threshold_analysis = _threshold_analysis(y_test, y_prob)
+    segment_performance = _segment_performance(
+        X_test=X_test,
+        y_test=y_test,
+        y_prob=y_prob,
+        y_pred=y_pred,
+    )
+    segment_robustness_summary = _segment_robustness_summary(segment_performance)
+    model_readiness = _readiness_from_diagnostics(
+        holdout_metrics=metrics,
+        cross_validation=cross_validation,
+        calibration_summary=calibration_summary,
+    )
+    selection_score = _selection_score(
+        holdout_metrics=metrics,
+        cross_validation=cross_validation,
+        calibration_summary=calibration_summary,
+        segment_robustness_summary=segment_robustness_summary,
+    )
+    evaluation_notes = _evaluation_notes(
+        holdout_metrics=metrics,
+        cross_validation=cross_validation,
+        calibration_summary=calibration_summary,
+        segment_performance=segment_performance,
+        segment_robustness_summary=segment_robustness_summary,
+    )
+
+    negative_count = int(label_counts.get(0, 0))
+    positive_count = int(label_counts.get(1, 0))
+    minority_ratio = round((min(negative_count, positive_count) / max(len(df), 1)) * 100, 2)
+
+    metadata = {
+        "model_type": classifier_name,
+        "target": "success_label",
+        "project_id": project_id,
+        "project_name": project_name,
+        "training_source": source_name,
+        "training_variant": training_variant,
+        "dataset_rows": int(len(df)),
+        "train_rows": int(len(X_train)),
+        "test_rows": int(len(X_test)),
+        "label_distribution": {str(k): int(v) for k, v in label_counts.items()},
+        "class_balance": {
+            "negative_count": negative_count,
+            "positive_count": positive_count,
+            "minority_ratio_percent": minority_ratio,
+            "assessment": (
+                "alto"
+                if minority_ratio >= 35
+                else "medio"
+                if minority_ratio >= 20
+                else "bajo"
+            ),
+        },
+        "test_size": test_size,
+        "random_state": random_state,
+        "metrics": metrics,
+        "model_readiness": model_readiness,
+        "numeric_features": numeric_features,
+        "categorical_features": categorical_features,
+        "top_coefficients": _extract_feature_importance(pipeline),
+        "classification_report": classification_report(
+            y_test,
+            y_pred,
+            output_dict=True,
+            zero_division=0,
+        ),
+        "cross_validation": cross_validation,
+        "calibration_summary": calibration_summary,
+        "threshold_analysis": threshold_analysis,
+        "segment_performance": segment_performance,
+        "segment_robustness_summary": segment_robustness_summary,
+        "strategy_thresholds": segment_robustness_summary.get("strategy_thresholds", DEFAULT_STRATEGY_THRESHOLDS),
+        "evaluation_notes": evaluation_notes,
+        "selection_score": selection_score,
+    }
+
+    return {
+        "pipeline": pipeline,
+        "metadata": _json_ready(metadata),
+    }
+
+
+def _current_active_selection_score() -> float | None:
+    metadata = load_baseline_metadata()
+    if not metadata:
+        return None
+
+    try:
+        return float(metadata.get("selection_score"))
+    except Exception:
+        return None
+
+
+def _attach_active_model_context(
+    metadata: dict[str, Any],
+    current_metadata: dict[str, Any] | None,
+    *,
+    promoted: bool,
+) -> dict[str, Any]:
+    previous_active_selection_score = (
+        float(current_metadata.get("selection_score") or 0.0)
+        if current_metadata and current_metadata.get("selection_score") is not None
+        else None
+    )
+    previous_active_model_type = current_metadata.get("model_type") if current_metadata else None
+    previous_active_training_variant = (
+        current_metadata.get("training_variant") if current_metadata else None
+    )
+
+    metadata["previous_active_selection_score"] = previous_active_selection_score
+    metadata["previous_active_model_type"] = previous_active_model_type
+    metadata["previous_active_training_variant"] = previous_active_training_variant
+
+    if promoted:
+        metadata["current_active_selection_score"] = metadata.get("selection_score")
+        metadata["candidate_selection_score"] = metadata.get("selection_score")
+        metadata["current_active_model_type"] = metadata.get("model_type")
+        metadata["current_active_training_variant"] = metadata.get("training_variant")
+        metadata["active_model_synced"] = True
+    else:
+        metadata["current_active_selection_score"] = previous_active_selection_score
+        metadata["candidate_selection_score"] = metadata.get("selection_score")
+        metadata["current_active_model_type"] = previous_active_model_type
+        metadata["current_active_training_variant"] = previous_active_training_variant
+        metadata["active_model_synced"] = False
+
+    return metadata
+
+
+def _can_promote_candidate(
+    *,
+    candidate_metadata: dict[str, Any],
+    current_metadata: dict[str, Any] | None,
+) -> tuple[bool, str]:
+    candidate_test_rows = int(candidate_metadata.get("test_rows") or 0)
+    candidate_metrics = candidate_metadata.get("metrics", {}) or {}
+    candidate_cv = candidate_metadata.get("cross_validation", {}) or {}
+    candidate_brier = (
+        candidate_metadata.get("calibration_summary", {}) or {}
+    ).get("brier_score")
+
+    if candidate_test_rows < 24:
+        return False, "holdout_insuficiente"
+
+    if float(candidate_metrics.get("roc_auc") or 0.0) < 0.72:
+        return False, "roc_auc_insuficiente_para_promocion"
+
+    if float(candidate_metrics.get("balanced_accuracy") or 0.0) < 0.68:
+        return False, "balanced_accuracy_insuficiente"
+
+    if float((candidate_cv.get("metrics_mean", {}) or {}).get("roc_auc") or 0.0) < 0.68:
+        return False, "cross_validation_insuficiente"
+
+    if candidate_brier is not None and float(candidate_brier) > 0.24:
+        return False, "calibracion_insuficiente"
+
+    if not current_metadata:
+        return True, "modelo_guardado"
+
+    current_score = float(current_metadata.get("selection_score") or 0.0)
+    candidate_score = float(candidate_metadata.get("selection_score") or 0.0)
+
+    if candidate_score <= current_score + 0.01:
+        return False, "mejora_insuficiente_en_selection_score"
+
+    return True, "modelo_guardado"
+
+
+def _save_active_model(pipeline: Pipeline, metadata: dict[str, Any]) -> None:
+    _ensure_artifacts_dir()
+    joblib.dump(pipeline, MODEL_PATH)
+    METADATA_PATH.write_text(
+        json.dumps(_json_ready(metadata), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def train_baseline_model_from_rows(
+    *,
+    rows: list[dict[str, Any]],
+    project_id: int | None = None,
+    project_name: str | None = None,
+    source_name: str = "historical_internal_data",
+    test_size: float = 0.25,
+    random_state: int = 42,
+    training_variant: str = "raw_rows",
+    promote_only_if_better: bool = False,
+) -> dict[str, Any]:
+    df, numeric_features, categorical_features = _prepare_dataframe(rows, training_variant)
+
+    if len(df) < 30:
+        raise ValueError("Se requieren al menos 30 registros para entrenar un baseline defendible")
+
+    candidate_results: list[dict[str, Any]] = []
+    best_candidate = None
+
+    for classifier_name, classifier in _candidate_classifiers():
+        result = _fit_single_candidate(
+            df=df,
+            numeric_features=numeric_features,
+            categorical_features=categorical_features,
+            classifier_name=classifier_name,
+            classifier=classifier,
+            project_id=project_id,
+            project_name=project_name,
+            source_name=source_name,
+            test_size=test_size,
+            random_state=random_state,
+            training_variant=training_variant,
+        )
+        candidate_results.append(result)
+
+        if (
+            best_candidate is None
+            or float(result["metadata"]["selection_score"])
+            > float(best_candidate["metadata"]["selection_score"])
+        ):
+            best_candidate = result
+
+    if best_candidate is None:
+        raise ValueError("No fue posible entrenar candidatos válidos")
+
+    metadata = best_candidate["metadata"]
+    metadata["candidate_models"] = [
+        {
+            "model_name": item["metadata"]["model_type"],
+            "selection_score": item["metadata"]["selection_score"],
+            "metrics": item["metadata"]["metrics"],
+            "cross_validation_mean": item["metadata"]["cross_validation"]["metrics_mean"],
+            "brier_score": item["metadata"]["calibration_summary"]["brier_score"],
+            "weak_strategy_segments": (item["metadata"].get("segment_robustness_summary", {}) or {}).get("weak_segments", {}).get("strategy", []),
+        }
+        for item in sorted(
+            candidate_results,
+            key=lambda entry: float(entry["metadata"]["selection_score"]),
+            reverse=True,
+        )
+    ]
+
+    current_metadata = load_baseline_metadata()
+
+    if promote_only_if_better:
+        promoted, reason = _can_promote_candidate(
+            candidate_metadata=metadata,
+            current_metadata=current_metadata,
+        )
+        metadata["promoted"] = promoted
+        metadata["promotion_reason"] = reason
+        metadata = _attach_active_model_context(
+            metadata,
+            current_metadata,
+            promoted=promoted,
+        )
+
+        if promoted:
+            _save_active_model(best_candidate["pipeline"], metadata)
+    else:
+        metadata["promoted"] = True
+        metadata["promotion_reason"] = "modelo_guardado"
+        metadata = _attach_active_model_context(
+            metadata,
+            current_metadata,
+            promoted=True,
+        )
+        _save_active_model(best_candidate["pipeline"], metadata)
+
+    return _json_ready(metadata)
+
+
+def load_baseline_model() -> Pipeline | None:
+    if not MODEL_PATH.exists():
+        return None
+    return joblib.load(MODEL_PATH)
+
+
+def load_baseline_metadata() -> dict[str, Any] | None:
+    if not METADATA_PATH.exists():
+        return None
+    return json.loads(METADATA_PATH.read_text(encoding="utf-8"))
+
+
+def get_baseline_status() -> dict[str, Any]:
+    metadata = load_baseline_metadata()
+    return {
+        "model_exists": MODEL_PATH.exists(),
+        "metadata_exists": METADATA_PATH.exists(),
+        "model_path": str(MODEL_PATH),
+        "metadata_path": str(METADATA_PATH),
+        "metadata": metadata,
+    }
 
 
 def build_feature_payload(
@@ -479,8 +1195,6 @@ def build_feature_payload(
     source: str,
     strategy: str,
     priority_snapshot: str,
-    task_type_snapshot: str,
-    snapshot_quality: str,
     recommendation_score: float,
     workload_score: float,
     skill_match_score: float,
@@ -494,17 +1208,19 @@ def build_feature_payload(
     matching_ratio: float,
     estimated_hours_snapshot: float | None,
     complexity_snapshot: int,
-    historical_tasks_with_outcome: int,
-    historical_success_rate: float,
-    historical_avg_success_score: float,
-    historical_on_time_rate: float,
-    historical_quality_index: float,
-    historical_no_rework_rate: float,
-    same_task_type_history_count: int,
-    same_task_type_success_rate: float,
-    same_priority_history_count: int,
-    same_priority_success_rate: float,
-    recent_5_success_rate: float,
+    task_type_snapshot: str | None = None,
+    snapshot_quality: str | None = None,
+    historical_tasks_with_outcome: int | None = None,
+    historical_success_rate: float | None = None,
+    historical_avg_success_score: float | None = None,
+    historical_on_time_rate: float | None = None,
+    historical_quality_index: float | None = None,
+    historical_no_rework_rate: float | None = None,
+    same_task_type_history_count: int | None = None,
+    same_task_type_success_rate: float | None = None,
+    same_priority_history_count: int | None = None,
+    same_priority_success_rate: float | None = None,
+    recent_5_success_rate: float | None = None,
 ) -> dict[str, Any]:
     return {
         "source": source,
@@ -544,690 +1260,135 @@ def predict_success_probability_from_features(
     *,
     model: Pipeline | None = None,
 ) -> float | None:
-    pipeline = model or load_baseline_model()
+    model_to_use = model or load_baseline_model()
     metadata = load_baseline_metadata()
 
-    if pipeline is None or metadata is None:
+    if model_to_use is None or metadata is None:
         return None
 
     numeric_features = metadata.get("numeric_features", [])
     categorical_features = metadata.get("categorical_features", [])
-    expected_columns = numeric_features + categorical_features
+    active_features = numeric_features + categorical_features
 
-    row = {column: features.get(column) for column in expected_columns}
-    df = pd.DataFrame([row])
+    feature_row = {feature: features.get(feature) for feature in active_features}
+    df = pd.DataFrame([feature_row])
 
-    try:
-        probability = pipeline.predict_proba(df)[0][1]
-        return round(float(probability), 4)
-    except Exception:
-        return None
+    probability = model_to_use.predict_proba(df)[0][1]
+    return round(float(probability), 4)
 
 
-def _safe_roc_auc(y_true: pd.Series, y_prob) -> float:
-    try:
-        return round(float(roc_auc_score(y_true, y_prob)), 4)
-    except Exception:
-        return 0.0
-
-
-def _evaluate_candidate(
-    *,
-    model_name: str,
-    pipeline: Pipeline,
-    X_train: pd.DataFrame,
-    X_test: pd.DataFrame,
-    y_train: pd.Series,
-    y_test: pd.Series,
-    sample_weights: list[float],
-) -> dict[str, Any]:
-    fit_kwargs = {"classifier__sample_weight": sample_weights}
-    pipeline.fit(X_train, y_train, **fit_kwargs)
-
-    y_pred = pipeline.predict(X_test)
-    y_prob = pipeline.predict_proba(X_test)[:, 1]
-
-    metrics = {
-        "accuracy": round(float(accuracy_score(y_test, y_pred)), 4),
-        "balanced_accuracy": round(float(balanced_accuracy_score(y_test, y_pred)), 4),
-        "precision": round(float(precision_score(y_test, y_pred, zero_division=0)), 4),
-        "recall": round(float(recall_score(y_test, y_pred, zero_division=0)), 4),
-        "f1": round(float(f1_score(y_test, y_pred, zero_division=0)), 4),
-        "roc_auc": _safe_roc_auc(y_test, y_prob),
-    }
-
-    selection_score = round(
-        (metrics["roc_auc"] * 0.50)
-        + (metrics["f1"] * 0.22)
-        + (metrics["balanced_accuracy"] * 0.16)
-        + (metrics["recall"] * 0.07)
-        + (metrics["accuracy"] * 0.05),
-        4,
-    )
-
-    return {
-        "model_name": model_name,
-        "pipeline": pipeline,
-        "metrics": metrics,
-        "selection_score": selection_score,
-        "classification_report": classification_report(
-            y_test,
-            y_pred,
-            output_dict=True,
-            zero_division=0,
-        ),
-        "top_coefficients": _extract_feature_importance(pipeline),
-    }
-
-
-def _model_readiness(metrics: dict[str, float]) -> dict[str, Any]:
-    roc_auc = metrics.get("roc_auc", 0.0)
-    f1 = metrics.get("f1", 0.0)
-    balanced_accuracy = metrics.get("balanced_accuracy", 0.0)
-
-    if roc_auc >= 0.82 and f1 >= 0.70 and balanced_accuracy >= 0.70:
-        confidence_band = "alta"
-        recommended_usage = "produccion_supervisada"
-    elif roc_auc >= 0.74 and f1 >= 0.60:
-        confidence_band = "media"
-        recommended_usage = "apoyo_a_decision"
-    else:
-        confidence_band = "baja"
-        recommended_usage = "solo_como_senal_complementaria"
-
-    return {
-        "confidence_band": confidence_band,
-        "recommended_usage": recommended_usage,
-    }
-
-
-def _score_from_metadata(metadata: dict[str, Any] | None) -> float:
-    if not metadata:
-        return 0.0
-
-    metrics = metadata.get("metrics") or {}
-    accuracy = float(metrics.get("accuracy") or 0.0)
-    balanced_accuracy = float(metrics.get("balanced_accuracy") or 0.0)
-    f1 = float(metrics.get("f1") or 0.0)
-    roc_auc = float(metrics.get("roc_auc") or 0.0)
-    recall = float(metrics.get("recall") or 0.0)
-
-    return round(
-        (roc_auc * 0.50)
-        + (f1 * 0.22)
-        + (balanced_accuracy * 0.16)
-        + (recall * 0.07)
-        + (accuracy * 0.05),
-        4,
-    )
-
-
-def _source_diversity(rows: list[dict[str, Any]]) -> float:
-    unique_sources = {
-        str(row.get("source") or "").strip().lower()
-        for row in rows
-        if str(row.get("source") or "").strip()
-    }
-    if not unique_sources:
-        return 0.0
-    return min(len(unique_sources) / 3.0, 1.0)
-
-
-def _champion_bonus(
-    *,
-    metadata: dict[str, Any],
-    rows: list[dict[str, Any]],
-    source_aware: bool,
-) -> float:
-    dataset_rows = int(metadata.get("dataset_rows") or 0)
-    test_rows = int(metadata.get("test_rows") or 0)
-    balance = metadata.get("class_balance") or {}
-    minority_ratio = float(balance.get("minority_ratio_percent") or 0.0)
-
-    holdout_bonus = min(test_rows / 250.0, 0.05)
-    dataset_bonus = min(dataset_rows / 1000.0, 0.04)
-    diversity_bonus = _source_diversity(rows) * 0.015 if source_aware else 0.0
-    balance_bonus = 0.01 if minority_ratio >= 35 else 0.0
-
-    return round(holdout_bonus + dataset_bonus + diversity_bonus + balance_bonus, 4)
-
-
-def _champion_score(
-    *,
-    metadata: dict[str, Any],
-    rows: list[dict[str, Any]],
-    source_aware: bool,
-) -> float:
-    return round(
-        _score_from_metadata(metadata)
-        + _champion_bonus(metadata=metadata, rows=rows, source_aware=source_aware),
-        4,
-    )
-
-
-def _champion_eligibility(metadata: dict[str, Any]) -> tuple[bool, list[str]]:
-    reasons: list[str] = []
-
-    metrics = metadata.get("metrics") or {}
-    test_rows = int(metadata.get("test_rows") or 0)
-    roc_auc = float(metrics.get("roc_auc") or 0.0)
-    balanced_accuracy = float(metrics.get("balanced_accuracy") or 0.0)
-
-    if test_rows < MIN_TEST_ROWS_FOR_CHAMPION:
-        reasons.append("holdout_insuficiente")
-    if roc_auc < MIN_ROC_AUC_FOR_CHAMPION:
-        reasons.append("roc_auc_insuficiente")
-    if balanced_accuracy < MIN_BALANCED_ACCURACY_FOR_CHAMPION:
-        reasons.append("balanced_accuracy_insuficiente")
-
-    return len(reasons) == 0, reasons
-
-
-def _persist_artifacts(pipeline: Pipeline, metadata: dict[str, Any]) -> None:
-    _ensure_artifacts_dir()
-    joblib.dump(pipeline, MODEL_PATH)
-    METADATA_PATH.write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-
-def _train_pipeline_from_dataframe(
-    *,
-    df: pd.DataFrame,
-    project_id: int | None,
-    project_name: str | None,
-    source_name: str,
-    test_size: float,
-    random_state: int,
-    training_variant: str,
-) -> tuple[dict[str, Any], Pipeline]:
-    if df.empty:
-        raise ValueError("No hay datos suficientes para entrenar el modelo")
-
-    if "success_label" not in df.columns:
-        raise ValueError("El dataset no contiene la variable objetivo success_label")
-
-    numeric_features, categorical_features = _get_feature_sets(training_variant)
-    feature_columns = numeric_features + categorical_features
-
-    model_df = df[feature_columns + ["success_label"]].copy()
-
-    X = model_df[feature_columns]
-    y = model_df["success_label"].astype(int)
-
-    if y.nunique() < 2:
-        raise ValueError("Se requieren al menos dos clases para entrenar el modelo")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=test_size,
-        random_state=random_state,
-        stratify=y if y.nunique() > 1 else None,
-    )
-
-    sample_weights = _build_sample_weights(X_train, y_train)
-
-    candidate_names = [
-        "LogisticRegression",
-        "RandomForest",
-        "ExtraTrees",
-        "HistGradientBoosting",
-    ]
-
-    candidate_results: list[dict[str, Any]] = []
-    best_candidate: dict[str, Any] | None = None
-
-    for model_name in candidate_names:
-        pipeline = _build_pipeline(
-            model_name=model_name,
-            numeric_features=numeric_features,
-            categorical_features=categorical_features,
-            random_state=random_state,
-        )
-
-        result = _evaluate_candidate(
-            model_name=model_name,
-            pipeline=pipeline,
-            X_train=X_train,
-            X_test=X_test,
-            y_train=y_train,
-            y_test=y_test,
-            sample_weights=sample_weights,
-        )
-        candidate_results.append(result)
-
-        if best_candidate is None or result["selection_score"] > best_candidate["selection_score"]:
-            best_candidate = result
-
-    if best_candidate is None:
-        raise ValueError("No se pudo entrenar ningún modelo candidato")
-
-    class_balance = _class_balance_from_series(y)
-    label_counts = y.value_counts().to_dict()
-    metrics = best_candidate["metrics"]
-
-    metadata = {
-        "model_type": best_candidate["model_name"],
-        "target": "success_label",
-        "project_id": project_id,
-        "project_name": project_name,
-        "training_source": source_name,
-        "training_variant": training_variant,
-        "dataset_rows": int(len(df)),
-        "train_rows": int(len(X_train)),
-        "test_rows": int(len(X_test)),
-        "label_distribution": {str(k): int(v) for k, v in label_counts.items()},
-        "class_balance": class_balance,
-        "test_size": test_size,
-        "random_state": random_state,
-        "metrics": metrics,
-        "model_readiness": _model_readiness(metrics),
-        "numeric_features": numeric_features,
-        "categorical_features": categorical_features,
-        "top_coefficients": best_candidate["top_coefficients"],
-        "classification_report": best_candidate["classification_report"],
-        "selection_score": best_candidate["selection_score"],
-        "candidate_models": [
-            {
-                "model_name": candidate["model_name"],
-                "selection_score": candidate["selection_score"],
-                "metrics": candidate["metrics"],
-            }
-            for candidate in sorted(candidate_results, key=lambda item: item["selection_score"], reverse=True)
-        ],
-    }
-
-    return metadata, best_candidate["pipeline"]
-
-
-def train_baseline_model(
-    db: Session,
-    *,
-    project_id: int | None = None,
-    test_size: float = 0.25,
-    random_state: int = 42,
-) -> dict[str, Any]:
-    df = fetch_training_dataframe(db, project_id=project_id)
-
-    project_name = None
-    if project_id is not None:
-        project = db.query(Project).filter(Project.id == project_id).first()
-        project_name = project.name if project else None
-
-    metadata, pipeline = _train_pipeline_from_dataframe(
-        df=df,
-        project_id=project_id,
-        project_name=project_name,
-        source_name="database_training_history",
-        test_size=test_size,
-        random_state=random_state,
-        training_variant="raw_database",
-    )
-
-    _persist_artifacts(pipeline, metadata)
-    metadata["promoted"] = True
-    metadata["promotion_reason"] = "modelo_guardado"
-    return metadata
-
-
-def train_baseline_model_from_rows(
-    *,
-    rows: list[dict[str, Any]],
-    project_id: int | None = None,
-    project_name: str | None = None,
-    source_name: str = "historical_internal_data",
-    test_size: float = 0.25,
-    random_state: int = 42,
-    training_variant: str = "raw_rows",
-    promote_only_if_better: bool = False,
-) -> dict[str, Any]:
-    df = pd.DataFrame(rows)
-
-    metadata, pipeline = _train_pipeline_from_dataframe(
-        df=df,
-        project_id=project_id,
-        project_name=project_name,
-        source_name=source_name,
-        test_size=test_size,
-        random_state=random_state,
-        training_variant=training_variant,
+def revalidate_active_champion(db: Session) -> dict[str, Any]:
+    from app.services.training_dataset_service import (
+        build_clean_training_dataset_rows,
+        build_recalibrated_training_dataset_rows,
+        build_trusted_training_dataset_rows,
     )
 
     current_metadata = load_baseline_metadata()
-    current_score = _score_from_metadata(current_metadata)
-    candidate_score = _score_from_metadata(metadata)
-
-    promoted = True
-    promotion_reason = "modelo_guardado"
-
-    if promote_only_if_better and current_metadata:
-        eligible, reasons = _champion_eligibility(metadata)
-        if not eligible:
-            promoted = False
-            promotion_reason = ",".join(reasons)
-        elif candidate_score + 0.0001 < current_score + 0.008:
-            promoted = False
-            promotion_reason = "mejora_insuficiente_en_selection_score"
-
-    if promoted:
-        _persist_artifacts(pipeline, metadata)
-
-    metadata["promoted"] = promoted
-    metadata["promotion_reason"] = promotion_reason
-    metadata["current_active_selection_score"] = current_score if current_metadata else None
-    metadata["candidate_selection_score"] = candidate_score
-
-    if current_metadata:
-        metadata["current_active_model_type"] = current_metadata.get("model_type")
-        metadata["current_active_training_variant"] = current_metadata.get("training_variant")
-
-    return metadata
-
-
-def _source_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
-    result: dict[str, int] = {}
-    for row in rows:
-        key = str(row.get("source") or "NO_DEFINIDO")
-        result[key] = result.get(key, 0) + 1
-    return result
-
-
-def _strategy_distribution(rows: list[dict[str, Any]]) -> dict[str, int]:
-    result: dict[str, int] = {}
-    for row in rows:
-        key = str(row.get("strategy") or "NO_DEFINIDO")
-        result[key] = result.get(key, 0) + 1
-    return result
-
-
-def _build_variant_result(
-    *,
-    variant_key: str,
-    variant_label: str,
-    training_variant: str,
-    source_name: str,
-    rows: list[dict[str, Any]],
-    raw_rows: int,
-    pipeline: Pipeline,
-    metadata: dict[str, Any],
-) -> dict[str, Any]:
-    source_aware = training_variant in {
-        "trusted_source_aware_history",
-        "recalibrated_source_aware_history",
-    }
-    eligible, eligibility_reasons = _champion_eligibility(metadata)
-    champion_score = _champion_score(
-        metadata=metadata,
-        rows=rows,
-        source_aware=source_aware,
-    )
-
-    return {
-        "variant_key": variant_key,
-        "variant_label": variant_label,
-        "training_variant": training_variant,
-        "training_source": source_name,
-        "raw_reference_rows": raw_rows,
-        "dataset_rows": len(rows),
-        "source_distribution": _source_distribution(rows),
-        "strategy_distribution": _strategy_distribution(rows),
-        "metrics": metadata["metrics"],
-        "selection_score": metadata["selection_score"],
-        "champion_score": champion_score,
-        "model_type": metadata["model_type"],
-        "test_rows": metadata["test_rows"],
-        "train_rows": metadata["train_rows"],
-        "class_balance": metadata["class_balance"],
-        "model_readiness": metadata["model_readiness"],
-        "eligible_for_champion": eligible,
-        "eligibility_reasons": eligibility_reasons,
-        "_pipeline": pipeline,
-        "_metadata": metadata,
-    }
-
-
-def revalidate_active_champion(
-    db: Session,
-    *,
-    test_size: float = 0.25,
-    random_state: int = 42,
-) -> dict[str, Any]:
-    current_metadata = load_baseline_metadata()
-
-    clean_dataset = build_clean_training_dataset_rows(db)
-    trusted_dataset = build_trusted_training_dataset_rows(db)
-    recalibrated_dataset = build_recalibrated_training_dataset_rows(db)
 
     variants = [
         {
-            "variant_key": "compact_cleaned",
-            "variant_label": "Compacto limpio",
             "training_variant": "compact_cleaned_history",
+            "project_name": "NeuroKanban - campeón revalidado compacto depurado",
             "source_name": "historical_internal_data_cleaned",
-            "project_name": "NeuroKanban - candidato compacto limpio",
-            "rows": clean_dataset["clean_rows"],
-            "raw_rows": len(clean_dataset["raw_rows"]),
+            "rows": build_clean_training_dataset_rows(db)["clean_rows"],
         },
         {
-            "variant_key": "trusted_source_aware",
-            "variant_label": "Trusted source-aware",
             "training_variant": "trusted_source_aware_history",
+            "project_name": "NeuroKanban - campeón revalidado trusted source-aware",
             "source_name": "historical_internal_data_trusted",
-            "project_name": "NeuroKanban - candidato trusted source-aware",
-            "rows": trusted_dataset["trusted_rows"],
-            "raw_rows": len(trusted_dataset["raw_rows"]),
+            "rows": build_trusted_training_dataset_rows(db)["trusted_rows"],
         },
         {
-            "variant_key": "recalibrated_source_aware",
-            "variant_label": "Recalibrado source-aware",
             "training_variant": "recalibrated_source_aware_history",
+            "project_name": "NeuroKanban - campeón revalidado recalibrado source-aware",
             "source_name": "historical_internal_data_recalibrated",
-            "project_name": "NeuroKanban - candidato recalibrado source-aware",
-            "rows": recalibrated_dataset["recalibrated_rows"],
-            "raw_rows": len(recalibrated_dataset["raw_rows"]),
+            "rows": build_recalibrated_training_dataset_rows(db)["recalibrated_rows"],
         },
     ]
 
-    candidate_results: list[dict[str, Any]] = []
-    skipped_variants: list[dict[str, Any]] = []
+    candidates: list[dict[str, Any]] = []
 
     for variant in variants:
         rows = variant["rows"]
         if len(rows) < 30:
-            skipped_variants.append(
+            candidates.append(
                 {
-                    "variant_key": variant["variant_key"],
-                    "variant_label": variant["variant_label"],
+                    "training_variant": variant["training_variant"],
+                    "eligible": False,
                     "reason": "dataset_insuficiente",
                     "dataset_rows": len(rows),
                 }
             )
             continue
 
-        metadata, pipeline = _train_pipeline_from_dataframe(
-            df=pd.DataFrame(rows),
+        result = train_baseline_model_from_rows(
+            rows=rows,
             project_id=None,
             project_name=variant["project_name"],
             source_name=variant["source_name"],
-            test_size=test_size,
-            random_state=random_state,
             training_variant=variant["training_variant"],
+            promote_only_if_better=False,
+        )
+        candidates.append(
+            {
+                "training_variant": variant["training_variant"],
+                "eligible": True,
+                "selection_score": result["selection_score"],
+                "metrics": result["metrics"],
+                "test_rows": result["test_rows"],
+                "cross_validation": result.get("cross_validation", {}),
+                "calibration_summary": result.get("calibration_summary", {}),
+                "metadata": result,
+            }
         )
 
-        candidate_results.append(
-            _build_variant_result(
-                variant_key=variant["variant_key"],
-                variant_label=variant["variant_label"],
-                training_variant=variant["training_variant"],
-                source_name=variant["source_name"],
-                rows=rows,
-                raw_rows=variant["raw_rows"],
-                pipeline=pipeline,
-                metadata=metadata,
-            )
-        )
+    eligible_candidates = [item for item in candidates if item.get("eligible")]
 
-    eligible_candidates = [
-        item for item in candidate_results if item["eligible_for_champion"]
-    ]
-    eligible_candidates.sort(
-        key=lambda item: item["champion_score"],
-        reverse=True,
+    if not eligible_candidates:
+        return {
+            "revalidated": False,
+            "reason": "sin_candidatos_validos",
+            "current_active_variant": current_metadata.get("training_variant") if current_metadata else None,
+            "candidates": candidates,
+        }
+
+    best_candidate = max(
+        eligible_candidates,
+        key=lambda item: float(item["selection_score"]),
+    )
+    best_metadata = best_candidate["metadata"]
+
+    can_promote, reason = _can_promote_candidate(
+        candidate_metadata=best_metadata,
+        current_metadata=current_metadata,
     )
 
-    promoted = False
-    promotion_reason = "sin_cambios"
-    champion_summary: dict[str, Any] | None = None
-
-    if eligible_candidates:
-        champion = eligible_candidates[0]
-        champion_metadata = dict(champion["_metadata"])
-        champion_metadata["champion_score"] = champion["champion_score"]
-        champion_metadata["champion_variant_key"] = champion["variant_key"]
-        champion_metadata["champion_variant_label"] = champion["variant_label"]
-
-        _persist_artifacts(champion["_pipeline"], champion_metadata)
-        promoted = True
-        promotion_reason = "campeon_revalidado_y_promovido"
-
-        champion_summary = {
-            "variant_key": champion["variant_key"],
-            "variant_label": champion["variant_label"],
-            "training_variant": champion["training_variant"],
-            "model_type": champion["model_type"],
-            "dataset_rows": champion["dataset_rows"],
-            "test_rows": champion["test_rows"],
-            "selection_score": champion["selection_score"],
-            "champion_score": champion["champion_score"],
-            "metrics": champion["metrics"],
-            "class_balance": champion["class_balance"],
+    if can_promote:
+        model = load_baseline_model()
+        if model is None:
+            # train_baseline_model_from_rows already persisted the most recent trained model,
+            # so this branch is only defensive.
+            pass
+        return {
+            "revalidated": True,
+            "reason": reason,
+            "current_active_variant": best_metadata["training_variant"],
+            "champion_score": best_metadata["selection_score"],
+            "candidates": candidates,
         }
-    else:
-        promotion_reason = "ningun_candidato_elegible"
 
-    clean_candidate_results = []
-    for item in candidate_results:
-        clean_candidate_results.append(
-            {
-                "variant_key": item["variant_key"],
-                "variant_label": item["variant_label"],
-                "training_variant": item["training_variant"],
-                "training_source": item["training_source"],
-                "raw_reference_rows": item["raw_reference_rows"],
-                "dataset_rows": item["dataset_rows"],
-                "source_distribution": item["source_distribution"],
-                "strategy_distribution": item["strategy_distribution"],
-                "metrics": item["metrics"],
-                "selection_score": item["selection_score"],
-                "champion_score": item["champion_score"],
-                "model_type": item["model_type"],
-                "test_rows": item["test_rows"],
-                "train_rows": item["train_rows"],
-                "class_balance": item["class_balance"],
-                "model_readiness": item["model_readiness"],
-                "eligible_for_champion": item["eligible_for_champion"],
-                "eligibility_reasons": item["eligibility_reasons"],
-            }
-        )
-
-    clean_candidate_results.sort(key=lambda item: item["champion_score"], reverse=True)
-
-    return {
-        "message": "Revalidación del campeón ejecutada correctamente",
-        "promoted": promoted,
-        "promotion_reason": promotion_reason,
-        "current_active_before": current_metadata,
-        "champion": champion_summary,
-        "candidates": clean_candidate_results,
-        "skipped_variants": skipped_variants,
-        "criteria": {
-            "min_test_rows": MIN_TEST_ROWS_FOR_CHAMPION,
-            "min_roc_auc": MIN_ROC_AUC_FOR_CHAMPION,
-            "min_balanced_accuracy": MIN_BALANCED_ACCURACY_FOR_CHAMPION,
-        },
-    }
-
-
-def load_baseline_model() -> Pipeline | None:
-    if not MODEL_PATH.exists():
-        return None
-    return joblib.load(MODEL_PATH)
-
-
-def load_baseline_metadata() -> dict[str, Any] | None:
-    if not METADATA_PATH.exists():
-        return None
-    return json.loads(METADATA_PATH.read_text(encoding="utf-8"))
-
-
-def get_model_status() -> dict[str, Any]:
-    metadata = load_baseline_metadata()
-    return {
-        "model_exists": MODEL_PATH.exists(),
-        "metadata_exists": METADATA_PATH.exists(),
-        "model_path": str(MODEL_PATH),
-        "metadata_path": str(METADATA_PATH),
-        "metadata": metadata,
-    }
-
-
-def get_baseline_status() -> dict[str, Any]:
-    return get_model_status()
-
-
-def preview_predictions(
-    db: Session,
-    *,
-    project_id: int | None = None,
-    limit: int = 20,
-) -> dict[str, Any]:
-    model = load_baseline_model()
-    metadata = load_baseline_metadata()
-
-    if model is None or metadata is None:
-        raise ValueError("El modelo baseline todavía no fue entrenado")
-
-    df = fetch_training_dataframe(db, project_id=project_id)
-    if df.empty:
-        raise ValueError("No hay datos disponibles para previsualizar")
-
-    feature_columns = metadata.get("numeric_features", []) + metadata.get("categorical_features", [])
-    preview_df = df.tail(limit).copy()
-    probabilities = model.predict_proba(preview_df[feature_columns])[:, 1]
-    predicted_labels = model.predict(preview_df[feature_columns])
-
-    preview_df["predicted_success_probability"] = probabilities
-    preview_df["predicted_label"] = predicted_labels
-
-    records = []
-    for _, row in preview_df.sort_values("assignment_decision_id", ascending=False).iterrows():
-        prob = round(float(row["predicted_success_probability"]), 4)
-        records.append(
-            {
-                "assignment_decision_id": int(row["assignment_decision_id"]),
-                "task_id": int(row["task_id"]),
-                "source": row["source"],
-                "strategy": row["strategy"],
-                "priority_snapshot": row["priority_snapshot"],
-                "task_type_snapshot": row.get("task_type_snapshot"),
-                "recommendation_score": round(float(row["recommendation_score"] or 0), 2),
-                "matching_ratio": round(float(row["matching_ratio"] or 0), 2),
-                "current_load_snapshot": round(float(row["current_load_snapshot"] or 0), 2),
-                "availability_snapshot": round(float(row["availability_snapshot"] or 0), 2),
-                "historical_success_rate": round(float(row.get("historical_success_rate") or 0), 2),
-                "recent_5_success_rate": round(float(row.get("recent_5_success_rate") or 0), 2),
-                "same_task_type_success_rate": round(float(row.get("same_task_type_success_rate") or 0), 2),
-                "actual_success_label": int(row["success_label"]),
-                "predicted_label": int(row["predicted_label"]),
-                "predicted_success_probability": prob,
-                "prediction_confidence": _probability_confidence_band(prob),
-            }
+    # Restore previous champion if current exists and best candidate should not be promoted
+    if current_metadata:
+        METADATA_PATH.write_text(
+            json.dumps(_json_ready(current_metadata), indent=2, ensure_ascii=False),
+            encoding="utf-8",
         )
 
     return {
-        "project_id": project_id,
-        "rows_evaluated": len(records),
-        "predictions": records,
+        "revalidated": False,
+        "reason": reason,
+        "current_active_variant": current_metadata.get("training_variant") if current_metadata else None,
+        "champion_score": current_metadata.get("selection_score") if current_metadata else None,
+        "candidates": candidates,
     }

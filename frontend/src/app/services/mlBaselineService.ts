@@ -3,11 +3,11 @@ import { getAccessToken } from "./sessionService";
 
 export type ModelMetricSummary = {
   accuracy: number;
+  balanced_accuracy?: number;
   precision: number;
   recall: number;
   f1: number;
   roc_auc: number;
-  balanced_accuracy?: number;
 };
 
 export type ModelCoefficient = {
@@ -38,15 +38,60 @@ export type ClassBalanceSummary = {
   assessment: string;
 };
 
-export type ModelReadinessSummary = {
-  confidence_band: string;
-  recommended_usage: string;
+export type CrossValidationSummary = {
+  folds: number;
+  metrics_mean?: Record<string, number>;
+  metrics_std?: Record<string, number>;
+};
+
+export type CalibrationBucketSummary = {
+  bucket: string;
+  support: number;
+  mean_predicted_probability: number;
+  actual_positive_rate: number;
+  absolute_gap: number;
+};
+
+export type CalibrationSummary = {
+  brier_score?: number | null;
+  expected_calibration_error?: number | null;
+  buckets?: CalibrationBucketSummary[];
+};
+
+export type ThresholdGridItem = {
+  threshold: number;
+  metrics: Record<string, number>;
+};
+
+export type ThresholdAnalysisSummary = {
+  default_threshold: number;
+  default_metrics?: Record<string, number>;
+  best_f1_threshold?: number;
+  best_f1_metrics?: Record<string, number>;
+  best_balanced_threshold?: number;
+  best_balanced_metrics?: Record<string, number>;
+  grid?: ThresholdGridItem[];
+};
+
+export type SegmentPerformanceRow = {
+  label: string;
+  support: number;
+  positive_rate: number;
+  metrics: Record<string, number>;
+};
+
+export type SegmentPerformanceSummary = {
+  by_strategy?: SegmentPerformanceRow[];
+  by_source?: SegmentPerformanceRow[];
+  by_task_type?: SegmentPerformanceRow[];
 };
 
 export type CandidateModelSummary = {
   model_name: string;
   selection_score: number;
   metrics: ModelMetricSummary;
+  cross_validation_mean?: Record<string, number>;
+  brier_score?: number | null;
 };
 
 export type BaselineMetadata = {
@@ -64,13 +109,34 @@ export type BaselineMetadata = {
   test_size: number;
   random_state: number;
   metrics: ModelMetricSummary;
-  model_readiness?: ModelReadinessSummary;
+  model_readiness?: {
+    confidence_band: string;
+    recommended_usage: string;
+  };
   numeric_features: string[];
   categorical_features: string[];
   top_coefficients: ModelCoefficient[];
   classification_report?: ClassificationReport;
+
   selection_score?: number;
+  cross_validation?: CrossValidationSummary;
+  calibration_summary?: CalibrationSummary;
+  threshold_analysis?: ThresholdAnalysisSummary;
+  segment_performance?: SegmentPerformanceSummary;
+  evaluation_notes?: string[];
   candidate_models?: CandidateModelSummary[];
+
+  promoted?: boolean;
+  promotion_reason?: string;
+  current_active_selection_score?: number | null;
+  candidate_selection_score?: number | null;
+  current_active_model_type?: string | null;
+  current_active_training_variant?: string | null;
+
+  previous_active_selection_score?: number | null;
+  previous_active_model_type?: string | null;
+  previous_active_training_variant?: string | null;
+  active_model_synced?: boolean;
 };
 
 export type BaselineStatusResponse = {
@@ -85,8 +151,11 @@ export type TrainBaselineResponse = BaselineMetadata & {
   excluded_by_reason?: Record<string, number>;
   raw_rows?: number;
   clean_rows?: number;
+  trusted_rows?: number;
+  base_clean_rows?: number;
+  recalibrated_rows?: number;
   excluded_rows?: number;
-  class_balance?: ClassBalanceSummary;
+  repaired_snapshot_rows?: number;
 };
 
 async function parseApiError(response: Response, fallback: string): Promise<never> {

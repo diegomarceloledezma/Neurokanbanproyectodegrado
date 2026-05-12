@@ -26,6 +26,7 @@ from app.schemas import (
 from app.services.ml_baseline_service import (
     build_feature_payload,
     get_baseline_status,
+    load_baseline_metadata,
     load_baseline_model,
     predict_success_probability_from_features,
 )
@@ -34,6 +35,13 @@ ALLOWED_STRATEGIES = {"balance", "efficiency", "urgency", "learning"}
 ALLOWED_MODES = {"heuristic", "hybrid"}
 ACTIVE_STATUSES = {"pending", "in_progress", "review", "blocked"}
 COMPLETED_STATUSES = {"done"}
+
+FEASIBILITY_RULES = {
+    "balance": {"min_availability": 20, "max_load": 85},
+    "efficiency": {"min_availability": 15, "max_load": 80},
+    "urgency": {"min_availability": 30, "max_load": 70},
+    "learning": {"min_availability": 10, "max_load": 90},
+}
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -55,6 +63,10 @@ def _neutral_rate() -> float:
 
 def _neutral_quality_index() -> float:
     return 60.0
+
+
+def _role_name(member: User) -> str:
+    return member.global_role.name if member.global_role else "member"
 
 
 def _compute_outcome_success_score(outcome: TaskOutcome) -> float:
@@ -86,6 +98,71 @@ def _next_sqlite_pk(db: Session, model) -> int:
     return int(current_max or 0) + 1
 
 
+def _assignability_rank(status: str) -> int:
+    if status == "assignable":
+        return 3
+    if status == "risky":
+        return 2
+    return 1
+
+
+def _assignability_label(status: str) -> str:
+    if status == "assignable":
+        return "Asignable ahora"
+    if status == "risky":
+        return "Asignable con riesgo"
+    return "No asignable ahora"
+
+
+def _strategy_decision_threshold(metadata: dict[str, Any] | None, strategy: str) -> float:
+    defaults = {
+        "balance": 0.50,
+        "efficiency": 0.53,
+        "urgency": 0.58,
+        "learning": 0.55,
+    }
+    if not metadata:
+        return defaults.get(strategy, 0.50)
+
+    strategy_thresholds = metadata.get("strategy_thresholds", {}) or {}
+    value = strategy_thresholds.get(strategy)
+    try:
+        return float(value) if value is not None else defaults.get(strategy, 0.50)
+    except Exception:
+        return defaults.get(strategy, 0.50)
+
+
+def _segment_confidence_adjustment(
+    metadata: dict[str, Any] | None,
+    *,
+    strategy: str,
+    task_type: str | None,
+) -> tuple[float, str | None]:
+    if not metadata:
+        return 0.0, None
+
+    robustness = metadata.get("segment_robustness_summary", {}) or {}
+    weak_segments = robustness.get("weak_segments", {}) or {}
+
+    penalty = 0.0
+    notes: list[str] = []
+
+    weak_strategies = set(weak_segments.get("strategy", []) or [])
+    weak_task_types = set(weak_segments.get("task_type", []) or [])
+
+    if strategy in weak_strategies:
+        penalty += 0.05
+        notes.append(f"el segmento {strategy} todavía es inestable en entrenamiento")
+
+    normalized_task_type = str(task_type or "other")
+    if normalized_task_type in weak_task_types:
+        penalty += 0.04
+        notes.append(f"el tipo de tarea {normalized_task_type} todavía presenta robustez limitada")
+
+    penalty = min(0.12, penalty)
+    return penalty, notes[0] if notes else None
+
+
 def load_task_or_none(db: Session, task_id: int):
     return (
         db.query(Task)
@@ -109,7 +186,7 @@ def load_task_or_none(db: Session, task_id: int):
 
 
 def build_recommendation_member(member: User):
-    role_name = member.global_role.name if member.global_role else "member"
+    role_name = _role_name(member)
     return RecommendationMember(
         id=member.id,
         full_name=member.full_name,
@@ -128,7 +205,7 @@ def get_eligible_project_members(task: Task):
         if not member or not member.is_active:
             continue
 
-        role_name = member.global_role.name if member.global_role else "member"
+        role_name = _role_name(member)
         if role_name == "admin":
             continue
 
@@ -429,19 +506,62 @@ def _fit_priority(skill_match: dict) -> int:
     return 0
 
 
-def _build_pool_context(raw_items: list[dict[str, Any]]) -> dict[str, Any]:
+def _operation_state(metrics: dict, strategy: str) -> str:
+    rules = FEASIBILITY_RULES.get(strategy, FEASIBILITY_RULES["balance"])
+    availability = float(metrics["availability"])
+    current_load = float(metrics["current_load"])
+
+    if availability <= 10 or current_load >= 95:
+        return "critical"
+
+    if availability < rules["min_availability"] or current_load > rules["max_load"]:
+        return "stressed"
+
+    return "feasible"
+
+
+def _operation_priority(operation_state: str) -> int:
+    if operation_state == "feasible":
+        return 3
+    if operation_state == "stressed":
+        return 2
+    return 1
+
+
+def _build_pool_context(raw_items: list[dict[str, Any]], strategy: str) -> dict[str, Any]:
     has_exact_fit = any(item["fit_priority"] == 3 for item in raw_items)
     has_partial_fit = any(item["fit_priority"] >= 2 for item in raw_items)
 
-    best_exact_score = None
-    exact_scores = [item["base_score"] for item in raw_items if item["fit_priority"] == 3]
-    if exact_scores:
-        best_exact_score = max(exact_scores)
+    has_feasible_exact_fit = False
+    has_feasible_partial_fit = False
+    has_member_feasible = False
+    has_member_feasible_exact_fit = False
+
+    for item in raw_items:
+        member = item["member"]
+        role_name = _role_name(member)
+        operation_state = _operation_state(item["metrics"], strategy)
+        feasible = operation_state == "feasible"
+
+        if feasible and item["fit_priority"] == 3:
+            has_feasible_exact_fit = True
+
+        if feasible and item["fit_priority"] >= 2:
+            has_feasible_partial_fit = True
+
+        if feasible and role_name == "member":
+            has_member_feasible = True
+
+        if feasible and role_name == "member" and item["fit_priority"] == 3:
+            has_member_feasible_exact_fit = True
 
     return {
         "has_exact_fit": has_exact_fit,
         "has_partial_fit": has_partial_fit,
-        "best_exact_score": best_exact_score,
+        "has_feasible_exact_fit": has_feasible_exact_fit,
+        "has_feasible_partial_fit": has_feasible_partial_fit,
+        "has_member_feasible": has_member_feasible,
+        "has_member_feasible_exact_fit": has_member_feasible_exact_fit,
     }
 
 
@@ -512,17 +632,96 @@ def calculate_score(task: Task, metrics: dict, skill_match: dict, strategy: str)
     return round(_clamp(score), 2), components
 
 
+def _evaluate_assignability(
+    *,
+    task: Task,
+    member: User,
+    strategy: str,
+    metrics: dict,
+    skill_match: dict,
+    pool_context: dict[str, Any],
+    operation_state: str,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+
+    role_name = _role_name(member)
+    required_count = int(skill_match.get("required_count", 0) or 0)
+    matching_count = int(len(skill_match.get("matching_skills", [])))
+    fit_priority = _fit_priority(skill_match)
+
+    exact_fit = fit_priority == 3
+    partial_fit = fit_priority == 2
+    no_fit = required_count > 0 and matching_count == 0
+
+    if operation_state == "critical":
+        reasons.append("sin capacidad operativa inmediata")
+        return "not_assignable", reasons
+
+    if strategy == "urgency":
+        if no_fit:
+            reasons.append("urgency exige un mínimo técnico")
+            return "not_assignable", reasons
+        if operation_state == "stressed":
+            reasons.append("la urgencia exige mayor disponibilidad")
+            return "risky", reasons
+
+    if strategy == "efficiency":
+        if no_fit:
+            reasons.append("efficiency no permite asignación sin ajuste técnico")
+            return "not_assignable", reasons
+        if partial_fit and pool_context["has_feasible_exact_fit"]:
+            reasons.append("hay perfiles técnicamente más eficientes")
+            return "risky", reasons
+
+    if strategy == "balance":
+        if no_fit and pool_context["has_feasible_partial_fit"]:
+            reasons.append("hay alternativas más viables con mejor ajuste")
+            return "not_assignable", reasons
+        if operation_state == "stressed":
+            reasons.append("capacidad limitada para una asignación balanceada")
+            return "risky", reasons
+
+    if strategy == "learning":
+        if no_fit and int(task.complexity or 0) >= 4:
+            reasons.append("la brecha es alta para aprendizaje en esta tarea")
+            return "not_assignable", reasons
+        if no_fit and operation_state == "stressed":
+            reasons.append("aprender con baja holgura operativa es riesgoso")
+            return "not_assignable", reasons
+        if partial_fit or no_fit:
+            reasons.append("requeriría acompañamiento cercano")
+            return "risky", reasons
+
+    if role_name == "leader":
+        if pool_context["has_member_feasible_exact_fit"] and not (exact_fit and operation_state == "feasible"):
+            reasons.append("hay un integrante más apropiado que el líder")
+            return "not_assignable", reasons
+        if pool_context["has_member_feasible"]:
+            reasons.append("el líder debería quedar como respaldo")
+            return "risky", reasons
+
+    if operation_state == "stressed":
+        reasons.append("se puede asignar, pero con carga ajustada")
+        return "risky", reasons
+
+    return "assignable", reasons
+
+
 def _apply_business_guardrails(
     *,
     task: Task,
+    member: User,
     strategy: str,
     base_score: float,
     metrics: dict,
     skill_match: dict,
     pool_context: dict[str, Any],
-) -> tuple[float, list[str]]:
+) -> tuple[float, list[str], str, str]:
     adjusted = float(base_score)
     notes: list[str] = []
+
+    role_name = _role_name(member)
+    is_leader = role_name == "leader"
 
     required_count = int(skill_match.get("required_count", 0) or 0)
     matching_count = int(len(skill_match.get("matching_skills", [])))
@@ -534,7 +733,7 @@ def _apply_business_guardrails(
 
     high_priority = task.priority in {"high", "critical"}
     high_complexity = int(task.complexity or 0) >= 4
-    overloaded = metrics["current_load"] >= 90 or metrics["availability"] <= 10
+    operation_state = _operation_state(metrics, strategy)
 
     same_task_type_count = int(metrics.get("same_task_type_history_count", 0) or 0)
     same_task_type_success_rate = float(metrics.get("same_task_type_success_rate", 50) or 50)
@@ -550,12 +749,12 @@ def _apply_business_guardrails(
             adjusted -= 14
             notes.append("no cubre habilidades clave de la tarea")
 
-        if pool_context["has_exact_fit"] and not exact_fit:
-            adjusted -= 4 if partial_fit else 10
+        if pool_context["has_feasible_exact_fit"] and not (exact_fit and operation_state == "feasible"):
+            adjusted -= 8 if partial_fit else 12
             if partial_fit:
-                notes.append("queda por debajo de perfiles con ajuste técnico completo")
+                notes.append("queda por debajo de perfiles viables con ajuste técnico completo")
             else:
-                notes.append("se penalizó por falta de ajuste técnico frente a otros candidatos")
+                notes.append("se penalizó por falta de ajuste técnico frente a opciones viables")
 
     elif strategy == "efficiency":
         if exact_fit:
@@ -567,8 +766,8 @@ def _apply_business_guardrails(
             adjusted -= 18
             notes.append("el ajuste técnico es insuficiente para priorizar eficiencia")
 
-        if pool_context["has_exact_fit"] and not exact_fit:
-            adjusted -= 5 if partial_fit else 12
+        if pool_context["has_feasible_exact_fit"] and not (exact_fit and operation_state == "feasible"):
+            adjusted -= 10 if partial_fit else 16
 
     elif strategy == "urgency":
         if exact_fit:
@@ -580,9 +779,8 @@ def _apply_business_guardrails(
             adjusted -= urgency_penalty
             notes.append("en urgencia también se exige un mínimo de ajuste técnico")
 
-        if overloaded:
-            adjusted -= 4
-            notes.append("la carga actual reduce margen de respuesta inmediata")
+        if pool_context["has_feasible_partial_fit"] and operation_state != "feasible":
+            adjusted -= 10
 
     elif strategy == "learning":
         if exact_fit:
@@ -608,6 +806,57 @@ def _apply_business_guardrails(
     elif recent_5_success_rate < 45 and metrics.get("historical_tasks_with_outcome", 0) >= 5:
         adjusted -= 2
 
+    if operation_state == "critical":
+        if strategy == "urgency":
+            adjusted -= 24
+            adjusted = min(adjusted, 28 if exact_fit else 18)
+        elif strategy == "efficiency":
+            adjusted -= 22
+            adjusted = min(adjusted, 38 if exact_fit else 22)
+        elif strategy == "balance":
+            adjusted -= 20
+            adjusted = min(adjusted, 40 if exact_fit else 24)
+        else:
+            adjusted -= 10
+            adjusted = min(adjusted, 46 if (exact_fit or partial_fit) else 22)
+
+        notes.append("operativamente está muy cargado para asumir una nueva tarea")
+
+    elif operation_state == "stressed":
+        if strategy == "urgency":
+            adjusted -= 14
+            adjusted = min(adjusted, 48 if exact_fit else 32)
+        elif strategy == "efficiency":
+            adjusted -= 12
+            adjusted = min(adjusted, 56 if exact_fit else 38)
+        elif strategy == "balance":
+            adjusted -= 10
+            adjusted = min(adjusted, 58 if exact_fit else 40)
+        else:
+            adjusted -= 4
+            adjusted = min(adjusted, 58 if (exact_fit or partial_fit) else 32)
+
+        notes.append("su disponibilidad actual es limitada para absorber trabajo adicional")
+
+    if is_leader:
+        if strategy == "urgency":
+            adjusted -= 12
+        elif strategy == "efficiency":
+            adjusted -= 10
+        elif strategy == "balance":
+            adjusted -= 8
+        else:
+            adjusted -= 4
+
+        if pool_context["has_member_feasible"]:
+            adjusted -= 6
+            notes.append("hay integrantes del equipo más apropiados operativamente que el líder")
+        else:
+            notes.append("al ser líder, solo conviene asignarlo si no hay alternativa mejor")
+
+    if pool_context["has_member_feasible_exact_fit"] and is_leader and not (exact_fit and operation_state == "feasible"):
+        adjusted -= 8
+
     if high_priority and no_fit:
         adjusted -= 6
 
@@ -615,15 +864,34 @@ def _apply_business_guardrails(
         adjusted -= 6
 
     if metrics["availability"] <= 0 and required_count > 0:
-        adjusted -= 3
+        adjusted -= 4
 
-    return round(_clamp(adjusted), 2), notes
+    assignability_status, assignability_reasons = _evaluate_assignability(
+        task=task,
+        member=member,
+        strategy=strategy,
+        metrics=metrics,
+        skill_match=skill_match,
+        pool_context=pool_context,
+        operation_state=operation_state,
+    )
+
+    if assignability_status == "not_assignable":
+        adjusted = min(adjusted, 22 if exact_fit else 16)
+    elif assignability_status == "risky":
+        adjusted = min(adjusted, 58 if exact_fit else 42)
+
+    notes.extend(assignability_reasons)
+
+    return round(_clamp(adjusted), 2), notes, operation_state, assignability_status
 
 
 def calculate_risk(task: Task, metrics: dict, skill_match: dict, strategy: str):
     required_count = int(skill_match.get("required_count", 0) or 0)
     matching_count = int(len(skill_match.get("matching_skills", [])))
 
+    if metrics["availability"] <= 10 or metrics["current_load"] >= 95:
+        return "high"
     if task.priority == "critical" and metrics["current_load"] > 80:
         return "high"
     if required_count > 0 and matching_count == 0 and task.complexity >= 3:
@@ -645,8 +913,16 @@ def calculate_risk(task: Task, metrics: dict, skill_match: dict, strategy: str):
     return "low"
 
 
-def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str, extra_notes: list[str] | None = None):
-    parts: list[str] = []
+def build_reason(
+    task: Task,
+    metrics: dict,
+    skill_match: dict,
+    strategy: str,
+    assignability_status: str,
+    extra_notes: list[str] | None = None,
+    segment_note: str | None = None,
+):
+    parts: list[str] = [f"estado de asignación: {_assignability_label(assignability_status).lower()}"]
 
     if skill_match["required_count"] > 0:
         if skill_match["matching_skills"]:
@@ -689,7 +965,14 @@ def build_reason(task: Task, metrics: dict, skill_match: dict, strategy: str, ex
         parts.append("la estrategia busca equilibrio entre capacidad, habilidades y desempeño")
 
     if extra_notes:
-        parts.extend(extra_notes[:2])
+        deduped = []
+        for note in extra_notes:
+            if note not in deduped:
+                deduped.append(note)
+        parts.extend(deduped[:3])
+
+    if segment_note and segment_note not in parts:
+        parts.append(segment_note)
 
     return "Se recomienda porque presenta " + "; ".join(parts) + "."
 
@@ -750,10 +1033,14 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
     pool_context = {
         "has_exact_fit": False,
         "has_partial_fit": False,
-        "best_exact_score": None,
+        "has_feasible_exact_fit": False,
+        "has_feasible_partial_fit": False,
+        "has_member_feasible": False,
+        "has_member_feasible_exact_fit": False,
     }
-    adjusted_score, guardrail_notes = _apply_business_guardrails(
+    adjusted_score, guardrail_notes, _, assignability_status = _apply_business_guardrails(
         task=task,
+        member=user,
         strategy=chosen_strategy,
         base_score=calculated_score,
         metrics=metrics,
@@ -809,6 +1096,7 @@ def build_assignment_snapshot_data(db: Session, task: Task, assigned_user_id: in
         ),
         "risk_level": latest_recommendation.risk_level if latest_recommendation else calculated_risk,
         "guardrail_notes": guardrail_notes,
+        "assignability_status": assignability_status,
     }
 
 
@@ -835,17 +1123,22 @@ def _compute_model_weight() -> float:
 def _build_hybrid_evaluation(
     *,
     task: Task,
+    member: User,
     strategy: str,
     heuristic_score: float,
     metrics: dict,
     skill_match: dict,
     components: dict,
     model,
+    baseline_metadata: dict[str, Any] | None,
     mode: str,
+    operation_state: str,
+    assignability_status: str,
 ):
     required_skills_count = int(skill_match.get("required_count", 0) or 0)
     matching_skills_count = int(len(skill_match.get("matching_skills", [])))
     matching_ratio = float(skill_match.get("matching_ratio", 0.0) or 0.0)
+    role_name = _role_name(member)
 
     if mode == "heuristic":
         return {
@@ -854,6 +1147,7 @@ def _build_hybrid_evaluation(
             "ml_success_probability": None,
             "hybrid_score": None,
             "model_used": False,
+            "segment_note": None,
         }
 
     feature_payload = build_feature_payload(
@@ -896,17 +1190,62 @@ def _build_hybrid_evaluation(
             "ml_success_probability": None,
             "hybrid_score": None,
             "model_used": False,
+            "segment_note": None,
         }
 
     if required_skills_count > 0 and matching_skills_count == 0:
         if strategy in {"balance", "efficiency"}:
             ml_success_probability = min(float(ml_success_probability), 0.35)
-        elif strategy == "urgency" and task.priority in {"high", "critical"}:
-            ml_success_probability = min(float(ml_success_probability), 0.45)
+        elif strategy == "urgency":
+            ml_success_probability = min(float(ml_success_probability), 0.30)
         elif strategy == "learning" and int(task.complexity or 0) >= 4:
             ml_success_probability = min(float(ml_success_probability), 0.35)
 
+    if operation_state == "critical":
+        if strategy == "urgency":
+            ml_success_probability = min(float(ml_success_probability), 0.35)
+        elif strategy == "learning":
+            ml_success_probability = min(float(ml_success_probability), 0.48)
+        else:
+            ml_success_probability = min(float(ml_success_probability), 0.50)
+
+    elif operation_state == "stressed":
+        if strategy == "urgency":
+            ml_success_probability = min(float(ml_success_probability), 0.55)
+        else:
+            ml_success_probability = min(float(ml_success_probability), 0.68)
+
+    if role_name == "leader" and strategy in {"balance", "efficiency", "urgency"}:
+        ml_success_probability = min(float(ml_success_probability), 0.58)
+
+    if assignability_status == "not_assignable":
+        ml_success_probability = min(float(ml_success_probability), 0.32)
+    elif assignability_status == "risky":
+        ml_success_probability = min(float(ml_success_probability), 0.62)
+
+    segment_penalty, segment_note = _segment_confidence_adjustment(
+        baseline_metadata,
+        strategy=strategy,
+        task_type=task.task_type,
+    )
+    ml_success_probability = max(0.0, float(ml_success_probability) - segment_penalty)
+    strategy_threshold = _strategy_decision_threshold(baseline_metadata, strategy)
+
     baseline_weight = _compute_model_weight()
+
+    if operation_state == "critical":
+        baseline_weight = min(baseline_weight, 0.14)
+    elif operation_state == "stressed":
+        baseline_weight = min(baseline_weight, 0.20)
+
+    if role_name == "leader" and strategy in {"balance", "efficiency", "urgency"}:
+        baseline_weight = min(baseline_weight, 0.16)
+
+    if assignability_status == "not_assignable":
+        baseline_weight = min(baseline_weight, 0.10)
+    elif assignability_status == "risky":
+        baseline_weight = min(baseline_weight, 0.18)
+
     heuristic_weight = round(1 - baseline_weight, 2)
 
     hybrid_score = round(
@@ -915,18 +1254,116 @@ def _build_hybrid_evaluation(
         2,
     )
 
+    if float(ml_success_probability) < strategy_threshold:
+        threshold_gap = strategy_threshold - float(ml_success_probability)
+        hybrid_score -= min(10.0, threshold_gap * 24.0)
+        if segment_note is None:
+            segment_note = f"la probabilidad ML queda por debajo del umbral esperado para {strategy}"
+
+    if assignability_status == "not_assignable":
+        hybrid_score = min(hybrid_score, 18 if matching_skills_count > 0 else 14)
+    elif assignability_status == "risky":
+        hybrid_score = min(hybrid_score, 44 if matching_skills_count > 0 else 34)
+
+    if operation_state == "critical":
+        if strategy == "urgency":
+            hybrid_score = min(hybrid_score, 24 if matching_skills_count > 0 else 18)
+        elif strategy == "efficiency":
+            hybrid_score = min(hybrid_score, 30 if matching_skills_count > 0 else 20)
+        elif strategy == "balance":
+            hybrid_score = min(hybrid_score, 32 if matching_skills_count > 0 else 22)
+        else:
+            hybrid_score = min(hybrid_score, 42 if matching_skills_count > 0 else 24)
+
+    hybrid_score = round(_clamp(hybrid_score), 2)
+
     return {
-        "final_score": hybrid_score,
+        "final_score": round(float(hybrid_score), 2),
         "heuristic_score": round(float(heuristic_score), 2),
         "ml_success_probability": round(float(ml_success_probability), 4),
-        "hybrid_score": hybrid_score,
+        "hybrid_score": round(float(hybrid_score), 2),
         "model_used": True,
+        "segment_note": segment_note,
+    }
+
+
+def _serialize_candidate_summary(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "member": build_recommendation_member(item["member"]),
+        "score": item["score"],
+        "reason": item["reason"],
+        "assignability_status": item["assignability_status"],
+        "assignability_label": _assignability_label(item["assignability_status"]),
+        "operation_state": item["operation_state"],
+        "risk_level": item["risk_level"],
+        "availability": item["metrics"]["availability"],
+        "current_load": item["metrics"]["current_load"],
+        "active_tasks": item["metrics"]["active_tasks"],
+        "matching_skills": item["skill_match"]["matching_skills"],
+        "heuristic_score": item.get("heuristic_score"),
+        "ml_success_probability": item.get("ml_success_probability"),
+        "hybrid_score": item.get("hybrid_score"),
+        "model_used": item.get("model_used", False),
+    }
+
+
+def _split_candidates_by_assignability(ranked_items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    assignable = [item for item in ranked_items if item["assignability_status"] == "assignable"]
+    risky = [item for item in ranked_items if item["assignability_status"] == "risky"]
+    not_assignable = [item for item in ranked_items if item["assignability_status"] == "not_assignable"]
+
+    return {
+        "assignable": assignable,
+        "risky": risky,
+        "not_assignable": not_assignable,
+    }
+
+
+def _decision_summary(strategy: str, ranked_items: list[dict[str, Any]]) -> dict[str, Any]:
+    buckets = _split_candidates_by_assignability(ranked_items)
+    assignable = buckets["assignable"]
+    risky = buckets["risky"]
+    not_assignable = buckets["not_assignable"]
+
+    if assignable:
+        decision_status = "assignable_candidate_found"
+        recommended_action = "assign_now"
+        primary_candidate_available = True
+        primary_candidate = _serialize_candidate_summary(assignable[0])
+    elif risky:
+        decision_status = "no_assignable_candidate"
+        if strategy == "learning":
+            recommended_action = "assign_with_mentoring_and_supervision"
+        else:
+            recommended_action = "replan_or_explicit_risk_acceptance"
+        primary_candidate_available = False
+        primary_candidate = None
+    else:
+        decision_status = "no_assignable_candidate"
+        recommended_action = "replan_or_escalate"
+        primary_candidate_available = False
+        primary_candidate = None
+
+    return {
+        "decision_status": decision_status,
+        "recommended_action": recommended_action,
+        "primary_candidate_available": primary_candidate_available,
+        "primary_candidate": primary_candidate,
+        "assignability_summary": {
+            "assignable_count": len(assignable),
+            "risky_count": len(risky),
+            "not_assignable_count": len(not_assignable),
+        },
+        "assignable_candidates": [_serialize_candidate_summary(item) for item in assignable[:5]],
+        "risky_candidates": [_serialize_candidate_summary(item) for item in risky[:5]],
+        "not_assignable_candidates": [_serialize_candidate_summary(item) for item in not_assignable[:5]],
     }
 
 
 def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
     raw_items: list[dict[str, Any]] = []
     baseline_model = load_baseline_model() if mode == "hybrid" else None
+    baseline_metadata = load_baseline_metadata() if mode == "hybrid" else None
 
     for member, membership in get_eligible_project_members(task):
         metrics = calculate_member_metrics(db, member, membership, task)
@@ -945,12 +1382,13 @@ def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
             }
         )
 
-    pool_context = _build_pool_context(raw_items)
+    pool_context = _build_pool_context(raw_items, strategy)
 
     ranked_items: list[dict[str, Any]] = []
     for raw in raw_items:
-        adjusted_score, guardrail_notes = _apply_business_guardrails(
+        adjusted_score, guardrail_notes, operation_state, assignability_status = _apply_business_guardrails(
             task=task,
+            member=raw["member"],
             strategy=strategy,
             base_score=raw["base_score"],
             metrics=raw["metrics"],
@@ -959,23 +1397,30 @@ def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
         )
 
         risk_level = calculate_risk(task, raw["metrics"], raw["skill_match"], strategy)
-        reason = build_reason(
-            task,
-            raw["metrics"],
-            raw["skill_match"],
-            strategy,
-            guardrail_notes,
-        )
 
         hybrid_eval = _build_hybrid_evaluation(
             task=task,
+            member=raw["member"],
             strategy=strategy,
             heuristic_score=adjusted_score,
             metrics=raw["metrics"],
             skill_match=raw["skill_match"],
             components=raw["components"],
             model=baseline_model,
+            baseline_metadata=baseline_metadata,
             mode=mode,
+            operation_state=operation_state,
+            assignability_status=assignability_status,
+        )
+
+        reason = build_reason(
+            task,
+            raw["metrics"],
+            raw["skill_match"],
+            strategy,
+            assignability_status,
+            guardrail_notes,
+            hybrid_eval.get("segment_note"),
         )
 
         ranked_items.append(
@@ -992,13 +1437,17 @@ def _rank_members(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
                 "risk_level": risk_level,
                 "reason": reason,
                 "fit_priority": raw["fit_priority"],
+                "operation_state": operation_state,
+                "assignability_status": assignability_status,
                 **raw["components"],
             }
         )
 
     ranked_items.sort(
         key=lambda item: (
+            _assignability_rank(item["assignability_status"]),
             item["score"],
+            _operation_priority(item["operation_state"]),
             item["fit_priority"],
             item["skill_match_score"],
             item["availability_score"],
@@ -1076,13 +1525,16 @@ def build_task_recommendations_response(db: Session, task: Task, strategy: str, 
             )
         )
 
-    return TaskRecommendationResponse(
-        task_id=task.id,
-        task_title=task.title,
-        strategy=strategy,
-        mode=mode,
-        recommendations=response_items,
-    )
+    decision = _decision_summary(strategy, ranked_items)
+
+    return {
+        "task_id": task.id,
+        "task_title": task.title,
+        "strategy": strategy,
+        "mode": mode,
+        "recommendations": response_items,
+        **decision,
+    }
 
 
 def build_task_simulation_response(db: Session, task: Task, strategy: str, mode: str = "hybrid"):
@@ -1115,10 +1567,13 @@ def build_task_simulation_response(db: Session, task: Task, strategy: str, mode:
             )
         )
 
-    return TaskSimulationResponse(
-        task_id=task.id,
-        task_title=task.title,
-        strategy=strategy,
-        mode=mode,
-        simulations=simulations,
-    )
+    decision = _decision_summary(strategy, ranked_items)
+
+    return {
+        "task_id": task.id,
+        "task_title": task.title,
+        "strategy": strategy,
+        "mode": mode,
+        "simulations": simulations,
+        **decision,
+    }

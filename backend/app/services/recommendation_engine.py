@@ -163,6 +163,24 @@ def _segment_confidence_adjustment(
     return penalty, notes[0] if notes else None
 
 
+def _balance_technical_gate(skill_match: dict) -> str:
+    required_count = int(skill_match.get("required_count", 0) or 0)
+    if required_count <= 0:
+        return "ok"
+
+    matching_count = int(len(skill_match.get("matching_skills", [])))
+    skill_match_score = float(skill_match.get("score", 0.0) or 0.0)
+    matching_ratio = float(skill_match.get("matching_ratio", 0.0) or 0.0)
+
+    if matching_count == 0:
+        return "fail"
+
+    if skill_match_score < 35 or (required_count >= 2 and matching_ratio < 0.34):
+        return "weak"
+
+    return "ok"
+
+
 def load_task_or_none(db: Session, task_id: int):
     return (
         db.query(Task)
@@ -674,6 +692,13 @@ def _evaluate_assignability(
             return "risky", reasons
 
     if strategy == "balance":
+        balance_gate = _balance_technical_gate(skill_match)
+        if balance_gate == "fail":
+            reasons.append("balance exige un mínimo técnico cuando la tarea tiene habilidades obligatorias")
+            return "not_assignable", reasons
+        if balance_gate == "weak":
+            reasons.append("el ajuste técnico mínimo para balance todavía es insuficiente")
+            return "risky", reasons
         if no_fit and pool_context["has_feasible_partial_fit"]:
             reasons.append("hay alternativas más viables con mejor ajuste")
             return "not_assignable", reasons
@@ -740,14 +765,20 @@ def _apply_business_guardrails(
     recent_5_success_rate = float(metrics.get("recent_5_success_rate", 50) or 50)
 
     if strategy == "balance":
+        balance_gate = _balance_technical_gate(skill_match)
+
         if exact_fit:
             adjusted += 8
             notes.append("fuerte ajuste técnico frente a los requisitos")
         elif partial_fit:
             adjusted += 3
+            if balance_gate == "weak":
+                adjusted -= 10
+                notes.append("el ajuste técnico mínimo para balance todavía es insuficiente")
         elif no_fit:
-            adjusted -= 14
+            adjusted -= 22
             notes.append("no cubre habilidades clave de la tarea")
+            notes.append("balance exige un mínimo técnico cuando la tarea tiene habilidades obligatorias")
 
         if pool_context["has_feasible_exact_fit"] and not (exact_fit and operation_state == "feasible"):
             adjusted -= 8 if partial_fit else 12
@@ -877,9 +908,15 @@ def _apply_business_guardrails(
     )
 
     if assignability_status == "not_assignable":
-        adjusted = min(adjusted, 22 if exact_fit else 16)
+        if strategy == "balance" and required_count > 0 and matching_count == 0:
+            adjusted = min(adjusted, 12)
+        else:
+            adjusted = min(adjusted, 22 if exact_fit else 16)
     elif assignability_status == "risky":
-        adjusted = min(adjusted, 58 if exact_fit else 42)
+        if strategy == "balance" and required_count > 0 and skill_match.get("score", 0) < 35:
+            adjusted = min(adjusted, 28)
+        else:
+            adjusted = min(adjusted, 58 if exact_fit else 42)
 
     notes.extend(assignability_reasons)
 
@@ -1194,12 +1231,20 @@ def _build_hybrid_evaluation(
         }
 
     if required_skills_count > 0 and matching_skills_count == 0:
-        if strategy in {"balance", "efficiency"}:
+        if strategy == "balance":
+            ml_success_probability = min(float(ml_success_probability), 0.28)
+        elif strategy == "efficiency":
             ml_success_probability = min(float(ml_success_probability), 0.35)
         elif strategy == "urgency":
             ml_success_probability = min(float(ml_success_probability), 0.30)
         elif strategy == "learning" and int(task.complexity or 0) >= 4:
             ml_success_probability = min(float(ml_success_probability), 0.35)
+
+    if strategy == "balance" and required_skills_count > 0:
+        if matching_skills_count == 0:
+            ml_success_probability = min(float(ml_success_probability), 0.28)
+        elif float(skill_match.get("score", 0.0) or 0.0) < 35 or matching_ratio < 0.34:
+            ml_success_probability = min(float(ml_success_probability), 0.42)
 
     if operation_state == "critical":
         if strategy == "urgency":
@@ -1259,6 +1304,16 @@ def _build_hybrid_evaluation(
         hybrid_score -= min(10.0, threshold_gap * 24.0)
         if segment_note is None:
             segment_note = f"la probabilidad ML queda por debajo del umbral esperado para {strategy}"
+
+    if strategy == "balance" and required_skills_count > 0:
+        if matching_skills_count == 0:
+            hybrid_score = min(hybrid_score, 12)
+            if segment_note is None:
+                segment_note = "balance exige un mínimo técnico cuando la tarea tiene habilidades obligatorias"
+        elif float(skill_match.get("score", 0.0) or 0.0) < 35 or matching_ratio < 0.34:
+            hybrid_score = min(hybrid_score, 26)
+            if segment_note is None:
+                segment_note = "el ajuste técnico mínimo para balance todavía es insuficiente"
 
     if assignability_status == "not_assignable":
         hybrid_score = min(hybrid_score, 18 if matching_skills_count > 0 else 14)

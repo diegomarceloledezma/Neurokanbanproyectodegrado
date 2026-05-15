@@ -1,9 +1,13 @@
+from pathlib import Path
+
+import app.models  # noqa: F401
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config import APP_NAME
-from app.db import engine
+from app.db import Base, engine
 from app.routes.analytics import router as analytics_router
 from app.routes.auth import router as auth_router
 from app.routes.dashboard import router as dashboard_router
@@ -15,9 +19,19 @@ from app.routes.ml_baseline import router as ml_baseline_router
 from app.routes.projects import router as projects_router
 from app.routes.recommendations import router as recommendations_router
 from app.routes.skills import router as skills_router
+from app.routes.task_resources import router as task_resources_router
 from app.routes.tasks import router as tasks_router
 from app.routes.training_data import router as training_data_router
 from app.routes.users import router as users_router
+
+BASE_DIR = Path(__file__).resolve().parent
+UPLOADS_DIR = BASE_DIR / "uploads"
+TASK_RESOURCES_DIR = UPLOADS_DIR / "task_resources"
+
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+TASK_RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title=APP_NAME)
 
@@ -32,10 +46,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+
 app.include_router(users_router)
 app.include_router(auth_router)
 app.include_router(projects_router)
 app.include_router(tasks_router)
+app.include_router(task_resources_router)
 app.include_router(members_router)
 app.include_router(recommendations_router)
 app.include_router(skills_router)

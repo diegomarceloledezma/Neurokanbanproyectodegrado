@@ -333,25 +333,57 @@ def _build_history_profile(db: Session, member: User, reference_task: Task):
 def calculate_member_metrics(db: Session, member: User, project_membership: ProjectMember, reference_task: Task):
     assigned_tasks = (
         db.query(Task)
-        .filter(Task.assigned_to == member.id)
+        .filter(
+            Task.assigned_to == member.id,
+            Task.id != reference_task.id,
+        )
         .order_by(Task.id.asc())
         .all()
     )
 
-    active_tasks = [task for task in assigned_tasks if task.status in ACTIVE_STATUSES]
-    completed_tasks = [task for task in assigned_tasks if task.status in COMPLETED_STATUSES]
+    completed_task_ids = {
+        task_id
+        for (task_id,) in (
+            db.query(TaskOutcome.task_id)
+            .join(Task, Task.id == TaskOutcome.task_id)
+            .filter(Task.assigned_to == member.id)
+            .all()
+        )
+    }
+
+    active_tasks: list[Task] = []
+    completed_tasks: list[Task] = []
+
+    for task in assigned_tasks:
+        if task.id in completed_task_ids or task.status in COMPLETED_STATUSES:
+            completed_tasks.append(task)
+            continue
+
+        if task.status in ACTIVE_STATUSES:
+            active_tasks.append(task)
+
+    same_project_active_tasks = [
+        task for task in active_tasks if task.project_id == reference_task.project_id
+    ]
+    cross_project_active_tasks = [
+        task for task in active_tasks if task.project_id != reference_task.project_id
+    ]
 
     total_tasks = len(assigned_tasks)
     active_count = len(active_tasks)
     completed_count = len(completed_tasks)
 
     completion_rate = round((completed_count / total_tasks) * 100, 2) if total_tasks > 0 else 0.0
-    total_active_hours = sum(_to_float(task.estimated_hours) for task in active_tasks)
+
+    same_project_active_hours = sum(_to_float(task.estimated_hours) for task in same_project_active_tasks)
+    cross_project_active_hours = sum(_to_float(task.estimated_hours) for task in cross_project_active_tasks)
+
+    weighted_active_hours = same_project_active_hours + (cross_project_active_hours * 0.45)
 
     capacity_hours = _to_float(project_membership.weekly_capacity_hours, 40.0) or 40.0
     declared_availability = _to_float(project_membership.availability_percentage, 100.0)
 
-    current_load = round(_clamp((total_active_hours / capacity_hours) * 100), 2)
+    current_load = round(_clamp((weighted_active_hours / capacity_hours) * 100), 2)
     availability = round(min(declared_availability, max(100 - current_load, 0)), 2)
 
     quality_rows = (
@@ -408,7 +440,9 @@ def calculate_member_metrics(db: Session, member: User, project_membership: Proj
         "active_tasks": active_count,
         "completed_tasks": completed_count,
         "completion_rate": completion_rate,
-        "total_active_hours": round(total_active_hours, 2),
+        "total_active_hours": round(weighted_active_hours, 2),
+        "same_project_active_hours": round(same_project_active_hours, 2),
+        "cross_project_active_hours": round(cross_project_active_hours, 2),
         "current_load": current_load,
         "availability": availability,
         "capacity_hours": capacity_hours,

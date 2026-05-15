@@ -179,6 +179,11 @@ def _finalize_effectiveness_bucket(bucket: dict) -> dict:
     }
 
 
+def _snapshot_value(snapshot: dict, key: str, default):
+    value = snapshot.get(key, default)
+    return default if value is None else value
+
+
 @router.get("/project/{project_id}", response_model=List[TaskBase])
 def get_tasks_by_project(
     project_id: int,
@@ -625,24 +630,24 @@ def assign_task(
         recommendation_score=(
             payload.recommendation_score
             if payload.recommendation_score is not None
-            else snapshot["recommendation_score"]
+            else _snapshot_value(snapshot, "recommendation_score", 0.0)
         ),
-        risk_level=payload.risk_level or snapshot["risk_level"],
+        risk_level=payload.risk_level or _snapshot_value(snapshot, "risk_level", "medium"),
         reason=payload.reason,
         recommendation_used=payload.recommendation_used,
-        workload_score=snapshot["workload_score"],
-        skill_match_score=snapshot["skill_match_score"],
-        availability_score=snapshot["availability_score"],
-        performance_score=snapshot["performance_score"],
-        current_load_snapshot=snapshot["current_load_snapshot"],
-        availability_snapshot=snapshot["availability_snapshot"],
-        active_tasks_snapshot=snapshot["active_tasks_snapshot"],
-        required_skills_count=snapshot["required_skills_count"],
-        matching_skills_count=snapshot["matching_skills_count"],
-        matching_ratio=snapshot["matching_ratio"],
-        estimated_hours_snapshot=snapshot["estimated_hours_snapshot"],
-        priority_snapshot=snapshot["priority_snapshot"],
-        complexity_snapshot=snapshot["complexity_snapshot"],
+        workload_score=_snapshot_value(snapshot, "workload_score", 0.0),
+        skill_match_score=_snapshot_value(snapshot, "skill_match_score", 0.0),
+        availability_score=_snapshot_value(snapshot, "availability_score", 0.0),
+        performance_score=_snapshot_value(snapshot, "performance_score", 0.0),
+        current_load_snapshot=_snapshot_value(snapshot, "current_load_snapshot", 0.0),
+        availability_snapshot=_snapshot_value(snapshot, "availability_snapshot", 0.0),
+        active_tasks_snapshot=_snapshot_value(snapshot, "active_tasks_snapshot", 0),
+        required_skills_count=_snapshot_value(snapshot, "required_skills_count", len(task.required_skills or [])),
+        matching_skills_count=_snapshot_value(snapshot, "matching_skills_count", 0),
+        matching_ratio=_snapshot_value(snapshot, "matching_ratio", 0.0),
+        estimated_hours_snapshot=_snapshot_value(snapshot, "estimated_hours_snapshot", float(task.estimated_hours or 0.0)),
+        priority_snapshot=_snapshot_value(snapshot, "priority_snapshot", task.priority),
+        complexity_snapshot=_snapshot_value(snapshot, "complexity_snapshot", task.complexity),
     )
 
     db.add(history)

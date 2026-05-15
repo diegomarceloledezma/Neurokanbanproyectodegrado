@@ -5,11 +5,22 @@ import {
   CalendarClock,
   CheckCircle2,
   ClipboardList,
+  Download,
+  FileText,
   History,
+  Paperclip,
   Save,
+  Trash2,
+  Upload,
   UserCircle2,
 } from "lucide-react";
 import { getTaskById, type TaskResponse } from "../services/taskService";
+import {
+  getTaskResources,
+  uploadTaskResource,
+  deleteTaskResource,
+  type TaskResourceResponse,
+} from "../services/taskResourceService";
 import {
   getTaskOutcome,
   upsertTaskOutcome,
@@ -20,7 +31,6 @@ import {
   type TaskAssignmentHistoryItem,
 } from "../services/taskHistoryService";
 import { getAccessToken, getCurrentUser } from "../services/sessionService";
-import { updateTaskStatus } from "../services/taskWorkflowService";
 
 function formatDate(value?: string | null) {
   if (!value) return "No registrada";
@@ -83,6 +93,8 @@ function humanizeSource(source?: string | null) {
     hybrid: "Híbrido",
     historical_backfill: "Backfill histórico",
     manual: "Manual",
+    heuristic_manual_override: "Heurístico manual",
+    hybrid_manual_override: "Híbrido manual",
   };
   return map[source || ""] ?? source ?? "No definida";
 }
@@ -106,6 +118,13 @@ function formatPlain(value?: number | null) {
   return Number(value).toFixed(2);
 }
 
+function formatBytes(bytes?: number | null) {
+  if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export default function TaskDetail() {
   const { taskId } = useParams();
   const navigate = useNavigate();
@@ -115,6 +134,7 @@ export default function TaskDetail() {
   const [task, setTask] = useState<TaskResponse | null>(null);
   const [outcome, setOutcome] = useState<TaskOutcomeResponse | null>(null);
   const [assignmentHistory, setAssignmentHistory] = useState<TaskAssignmentHistoryItem[]>([]);
+  const [resources, setResources] = useState<TaskResourceResponse[]>([]);
 
   const [completedAt, setCompletedAt] = useState("");
   const [finishedOnTime, setFinishedOnTime] = useState("true");
@@ -124,11 +144,10 @@ export default function TaskDetail() {
   const [reworkCount, setReworkCount] = useState("0");
   const [notes, setNotes] = useState("");
 
-  const [statusValue, setStatusValue] = useState<
-    "pending" | "in_progress" | "review" | "blocked" | "done"
-  >("pending");
-  const [actualHoursValue, setActualHoursValue] = useState("");
-  const [savingStatus, setSavingStatus] = useState(false);
+  const [resourceFile, setResourceFile] = useState<File | null>(null);
+  const [resourceNote, setResourceNote] = useState("");
+  const [uploadingResource, setUploadingResource] = useState(false);
+  const [deletingResourceId, setDeletingResourceId] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [savingOutcome, setSavingOutcome] = useState(false);
@@ -139,31 +158,12 @@ export default function TaskDetail() {
     return assignmentHistory.length > 0 ? assignmentHistory[0] : null;
   }, [assignmentHistory]);
 
-  const roleName = (
-    currentUser?.role_name ||
-    currentUser?.global_role?.name ||
-    ""
-  ).toLowerCase();
+  const currentRole = currentUser?.role_name || currentUser?.global_role?.name || "";
 
-  const isAdminOrLeader = roleName === "admin" || roleName === "leader";
-  const isAssignedMember = task?.assignee?.id === currentUser?.id;
-  const canUpdateTaskStatus = isAdminOrLeader || isAssignedMember;
-  const canUseRecommendation = isAdminOrLeader;
-  const canRegisterOutcome = isAdminOrLeader;
-
-  const availableStatusOptions = isAdminOrLeader
-    ? [
-        { value: "pending", label: "Pendiente" },
-        { value: "in_progress", label: "En progreso" },
-        { value: "review", label: "En revisión" },
-        { value: "blocked", label: "Bloqueada" },
-        { value: "done", label: "Completada" },
-      ]
-    : [
-        { value: "in_progress", label: "En progreso" },
-        { value: "review", label: "En revisión" },
-        { value: "blocked", label: "Bloqueada" },
-      ];
+  const canDeleteResource = (resource: TaskResourceResponse) => {
+    if (currentRole === "admin" || currentRole === "leader") return true;
+    return currentUser?.id === resource.uploaded_by;
+  };
 
   useEffect(() => {
     if (!taskId || !token) return;
@@ -174,25 +174,17 @@ export default function TaskDetail() {
         setError("");
         setSuccessMessage("");
 
-        const [taskData, outcomeData, historyData] = await Promise.all([
+        const [taskData, outcomeData, historyData, resourceData] = await Promise.all([
           getTaskById(taskId, token),
           getTaskOutcome(taskId, token),
           getTaskAssignmentHistory(taskId, token),
+          getTaskResources(taskId, token),
         ]);
 
         setTask(taskData);
         setOutcome(outcomeData);
         setAssignmentHistory(historyData);
-
-        setStatusValue(
-          (taskData.status as "pending" | "in_progress" | "review" | "blocked" | "done") ||
-            "pending"
-        );
-        setActualHoursValue(
-          taskData.actual_hours !== null && taskData.actual_hours !== undefined
-            ? String(taskData.actual_hours)
-            : ""
-        );
+        setResources(resourceData);
 
         if (outcomeData) {
           setCompletedAt(
@@ -217,49 +209,6 @@ export default function TaskDetail() {
 
     loadData();
   }, [taskId, token]);
-
-  const handleUpdateTaskStatus = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    if (!taskId || !token) return;
-
-    try {
-      setSavingStatus(true);
-      setError("");
-      setSuccessMessage("");
-
-      const updatedTask = await updateTaskStatus(
-        taskId,
-        {
-          status: statusValue,
-          actual_hours: actualHoursValue !== "" ? Number(actualHoursValue) : null,
-        },
-        token
-      );
-
-      setTask(updatedTask);
-      setStatusValue(
-        (updatedTask.status as "pending" | "in_progress" | "review" | "blocked" | "done") ||
-          "pending"
-      );
-      setActualHoursValue(
-        updatedTask.actual_hours !== null && updatedTask.actual_hours !== undefined
-          ? String(updatedTask.actual_hours)
-          : ""
-      );
-
-      if (statusValue === "review") {
-        setSuccessMessage("Estado actualizado correctamente. La tarea quedó en revisión.");
-      } else {
-        setSuccessMessage("Estado actualizado correctamente.");
-      }
-    } catch (err) {
-      if (err instanceof Error) setError(err.message);
-      else setError("No se pudo actualizar el estado de la tarea.");
-    } finally {
-      setSavingStatus(false);
-    }
-  };
 
   const handleSaveOutcome = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -309,6 +258,57 @@ export default function TaskDetail() {
     }
   };
 
+  const handleUploadResource = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!taskId || !token || !resourceFile) return;
+
+    try {
+      setUploadingResource(true);
+      setError("");
+      setSuccessMessage("");
+
+      const saved = await uploadTaskResource(taskId, resourceFile, resourceNote, token);
+      setResources((prev) => [saved, ...prev]);
+      setResourceFile(null);
+      setResourceNote("");
+
+      const fileInput = document.getElementById("task-resource-file") as HTMLInputElement | null;
+      if (fileInput) {
+        fileInput.value = "";
+      }
+
+      setSuccessMessage("Recurso subido correctamente.");
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo subir el recurso.");
+    } finally {
+      setUploadingResource(false);
+    }
+  };
+
+  const handleDeleteResource = async (resourceId: number) => {
+    if (!token) return;
+
+    const confirmed = window.confirm("¿Deseas eliminar este recurso?");
+    if (!confirmed) return;
+
+    try {
+      setDeletingResourceId(resourceId);
+      setError("");
+      setSuccessMessage("");
+
+      await deleteTaskResource(resourceId, token);
+      setResources((prev) => prev.filter((item) => item.id !== resourceId));
+      setSuccessMessage("Recurso eliminado correctamente.");
+    } catch (err) {
+      if (err instanceof Error) setError(err.message);
+      else setError("No se pudo eliminar el recurso.");
+    } finally {
+      setDeletingResourceId(null);
+    }
+  };
+
   if (loading) {
     return <div className="text-slate-300">Cargando detalle de tarea...</div>;
   }
@@ -324,10 +324,7 @@ export default function TaskDetail() {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div>
-        <Link
-          to={task.project_id ? `/project/${task.project_id}` : "/projects"}
-          className="text-cyan-400 hover:text-cyan-300 text-sm"
-        >
+        <Link to={task.project_id ? `/project/${task.project_id}` : "/projects"} className="text-cyan-400 hover:text-cyan-300 text-sm" >
           ← Volver al proyecto
         </Link>
 
@@ -339,15 +336,10 @@ export default function TaskDetail() {
             </p>
           </div>
 
-          {canUseRecommendation && (
-            <button
-              onClick={() => navigate(`/recommendation/${task.id}`)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all"
-            >
-              <BrainCircuit className="w-4 h-4" />
-              Recomendación inteligente
-            </button>
-          )}
+          <button onClick={() => navigate(`/recommendation/${task.id}`)} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white hover:from-cyan-600 hover:to-purple-700 transition-all" >
+            <BrainCircuit className="w-4 h-4" />
+            Recomendación inteligente
+          </button>
         </div>
       </div>
 
@@ -397,11 +389,6 @@ export default function TaskDetail() {
             </div>
 
             <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
-              <p className="text-slate-400 text-xs mb-1">Horas reales</p>
-              <p className="text-white">{task.actual_hours ?? "No registradas"}</p>
-            </div>
-
-            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
               <p className="text-slate-400 text-xs mb-1">Fecha límite</p>
               <p className="text-white">{formatDate(task.due_date)}</p>
             </div>
@@ -422,10 +409,7 @@ export default function TaskDetail() {
             <div className="flex flex-wrap gap-2">
               {task.required_skills && task.required_skills.length > 0 ? (
                 task.required_skills.map((item) => (
-                  <span
-                    key={item.id}
-                    className="px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm"
-                  >
+                  <span key={item.id} className="px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-sm" >
                     {item.skill?.name || "Habilidad"} · Nivel {item.required_level}
                   </span>
                 ))
@@ -486,69 +470,90 @@ export default function TaskDetail() {
         </div>
       </div>
 
-      {canUpdateTaskStatus && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="xl:col-span-1 bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
-            <ClipboardList className="w-5 h-5 text-cyan-400" />
-            <h2 className="text-2xl text-white">Actualizar estado de la tarea</h2>
+            <Upload className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-2xl text-white">Subir recurso</h2>
           </div>
 
-          <form onSubmit={handleUpdateTaskStatus} className="space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Nuevo estado</label>
-                <select
-                  value={statusValue}
-                  onChange={(e) =>
-                    setStatusValue(
-                      e.target.value as "pending" | "in_progress" | "review" | "blocked" | "done"
-                    )
-                  }
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                >
-                  {availableStatusOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Horas reales trabajadas</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={actualHoursValue}
-                  onChange={(e) => setActualHoursValue(e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                />
-              </div>
+          <form onSubmit={handleUploadResource} className="space-y-4">
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Archivo o imagen</label>
+              <input id="task-resource-file" type="file" onChange={(e) => setResourceFile(e.target.files?.[0] ?? null)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-2 file:text-slate-950" />
+              <p className="text-slate-500 text-xs mt-2">Límite sugerido: 15 MB</p>
             </div>
 
-            {!isAdminOrLeader && (
-              <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-4 text-cyan-300 text-sm">
-                Como integrante puedes mover la tarea a En progreso, En revisión o Bloqueada.
-              </div>
-            )}
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Nota opcional</label>
+              <textarea value={resourceNote} onChange={(e) => setResourceNote(e.target.value)} rows={3} placeholder="Ejemplo: Diagrama actualizado, captura del error, documento base, etc." className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500" />
+            </div>
 
-            {isAdminOrLeader && (
-              <div className="rounded-lg border border-purple-500/20 bg-purple-500/10 p-4 text-purple-300 text-sm">
-                Como líder o administrador también puedes marcar la tarea como completada.
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={savingStatus}
-              className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60"
-            >
-              {savingStatus ? "Guardando..." : "Guardar estado"}
+            <button type="submit" disabled={!resourceFile || uploadingResource} className={`inline-flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all ${ !resourceFile || uploadingResource ? "bg-slate-800 text-slate-500 cursor-not-allowed" : "bg-cyan-500 text-slate-950 hover:bg-cyan-400" }`} >
+              <Upload className="w-4 h-4" />
+              {uploadingResource ? "Subiendo..." : "Subir recurso"}
             </button>
           </form>
         </div>
-      )}
+
+        <div className="xl:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Paperclip className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-2xl text-white">Recursos de la tarea</h2>
+          </div>
+
+          {resources.length === 0 ? (
+            <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-slate-400 text-sm">
+              Aún no se subieron recursos para esta tarea.
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {resources.map((resource) => (
+                <div key={resource.id} className="rounded-xl border border-slate-800 bg-slate-950/40 p-4" >
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex items-start gap-3">
+                      <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                        <FileText className="w-5 h-5 text-cyan-300" />
+                      </div>
+
+                      <div>
+                        <p className="text-white font-medium break-all">{resource.original_filename}</p>
+                        <p className="text-slate-400 text-sm mt-1">
+                          {formatBytes(resource.size_bytes)} · {resource.content_type || "Tipo no detectado"}
+                        </p>
+                        <p className="text-slate-500 text-xs mt-1">
+                          Subido por {resource.uploaded_by_user?.full_name || "Usuario"} · {formatDate(resource.created_at)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 flex-wrap">
+                      <a href={resource.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-cyan-500/20 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/15" >
+                        <Download className="w-4 h-4" />
+                        Abrir
+                      </a>
+
+                      {canDeleteResource(resource) && (
+                        <button onClick={() => handleDeleteResource(resource.id)} disabled={deletingResourceId === resource.id} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${ deletingResourceId === resource.id ? "border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed" : "border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/15" }`} >
+                          <Trash2 className="w-4 h-4" />
+                          {deletingResourceId === resource.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {resource.note && (
+                    <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
+                      <p className="text-slate-400 text-xs mb-1">Nota</p>
+                      <p className="text-slate-200 text-sm">{resource.note}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">
@@ -599,9 +604,7 @@ export default function TaskDetail() {
 
                 <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4">
                   <p className="text-slate-400 text-xs mb-1">Disponibilidad snapshot</p>
-                  <p className="text-white">
-                    {formatPercentNumber(latestDecision.availability_snapshot)}
-                  </p>
+                  <p className="text-white">{formatPercentNumber(latestDecision.availability_snapshot)}</p>
                 </div>
               </div>
 
@@ -615,10 +618,7 @@ export default function TaskDetail() {
 
             <div className="space-y-3">
               {assignmentHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-xl border border-slate-800 bg-slate-950/40 p-4"
-                >
+                <div key={item.id} className="rounded-xl border border-slate-800 bg-slate-950/40 p-4" >
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
                       <p className="text-white font-medium">
@@ -675,110 +675,65 @@ export default function TaskDetail() {
         )}
       </div>
 
-      {canRegisterOutcome && (
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <CalendarClock className="w-5 h-5 text-purple-400" />
-            <h2 className="text-2xl text-white">Registrar resultado de la tarea</h2>
-          </div>
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <CalendarClock className="w-5 h-5 text-purple-400" />
+          <h2 className="text-2xl text-white">Registrar resultado de la tarea</h2>
+        </div>
 
-          <form onSubmit={handleSaveOutcome} className="space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Fecha de finalización</label>
-                <input
-                  type="datetime-local"
-                  value={completedAt}
-                  onChange={(e) => setCompletedAt(e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">¿Terminó a tiempo?</label>
-                <select
-                  value={finishedOnTime}
-                  onChange={(e) => setFinishedOnTime(e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                >
-                  <option value="true">Sí</option>
-                  <option value="false">No</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Horas de retraso</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={delayHours}
-                  onChange={(e) => setDelayHours(e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Calidad (1 a 5)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="5"
-                  value={qualityScore}
-                  onChange={(e) => setQualityScore(e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 text-sm mb-2">Cantidad de retrabajos</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={reworkCount}
-                  onChange={(e) => setReworkCount(e.target.value)}
-                  className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white"
-                />
-              </div>
-
-              <div className="flex items-end">
-                <label className="inline-flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 w-full">
-                  <input
-                    type="checkbox"
-                    checked={hadRework}
-                    onChange={(e) => setHadRework(e.target.checked)}
-                  />
-                  <span className="text-slate-200">La tarea tuvo retrabajo</span>
-                </label>
-              </div>
+        <form onSubmit={handleSaveOutcome} className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Fecha de finalización</label>
+              <input type="datetime-local" value={completedAt} onChange={(e) => setCompletedAt(e.target.value)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white" />
             </div>
 
             <div>
-              <label className="block text-slate-300 text-sm mb-2">Notas u observaciones</label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={4}
-                placeholder="Describe el resultado final, problemas encontrados o aprendizajes."
-                className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500"
-              />
+              <label className="block text-slate-300 text-sm mb-2">¿Terminó a tiempo?</label>
+              <select value={finishedOnTime} onChange={(e) => setFinishedOnTime(e.target.value)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white" >
+                <option value="true">Sí</option>
+                <option value="false">No</option>
+              </select>
             </div>
 
-            <button
-              type="submit"
-              disabled={savingOutcome}
-              className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60"
-            >
-              {savingOutcome ? (
-                <CheckCircle2 className="w-4 h-4 animate-pulse" />
-              ) : (
-                <Save className="w-4 h-4" />
-              )}
-              {savingOutcome ? "Guardando..." : "Guardar resultado"}
-            </button>
-          </form>
-        </div>
-      )}
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Horas de retraso</label>
+              <input type="number" min="0" step="0.5" value={delayHours} onChange={(e) => setDelayHours(e.target.value)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white" />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Calidad (1 a 5)</label>
+              <input type="number" min="1" max="5" value={qualityScore} onChange={(e) => setQualityScore(e.target.value)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white" />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 text-sm mb-2">Cantidad de retrabajos</label>
+              <input type="number" min="0" value={reworkCount} onChange={(e) => setReworkCount(e.target.value)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white" />
+            </div>
+
+            <div className="flex items-end">
+              <label className="inline-flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800 px-4 py-3 w-full">
+                <input type="checkbox" checked={hadRework} onChange={(e) => setHadRework(e.target.checked)} />
+                <span className="text-slate-200">La tarea tuvo retrabajo</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-slate-300 text-sm mb-2">Notas u observaciones</label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} placeholder="Describe el resultado final, problemas encontrados o aprendizajes." className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white placeholder:text-slate-500" />
+          </div>
+
+          <button type="submit" disabled={savingOutcome} className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition-all disabled:opacity-60" >
+            {savingOutcome ? (
+              <CheckCircle2 className="w-4 h-4 animate-pulse" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
+            {savingOutcome ? "Guardando..." : "Guardar resultado"}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }

@@ -495,6 +495,28 @@ class TaskOutcomeResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TaskResourceUploaderSummary(BaseModel):
+    id: int
+    full_name: str
+    email: EmailStr
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TaskResourceResponse(BaseModel):
+    id: int
+    task_id: int
+    original_filename: str
+    stored_filename: str
+    content_type: Optional[str] = None
+    size_bytes: int
+    note: Optional[str] = None
+    file_url: str
+    uploaded_by: int
+    created_at: datetime
+    uploaded_by_user: Optional[TaskResourceUploaderSummary] = None
+
+
 class TrainingDatasetRow(BaseModel):
     assignment_decision_id: int
     task_id: int

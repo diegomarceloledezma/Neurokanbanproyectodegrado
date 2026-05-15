@@ -117,6 +117,13 @@ class User(Base):
     cascade="all, delete-orphan",
     )
 
+    uploaded_task_resources = relationship(
+        "TaskResource",
+        back_populates="uploaded_by_user",
+        foreign_keys="TaskResource.uploaded_by",
+        cascade="all, delete-orphan",
+    )   
+
 
 class Skill(Base):
     __tablename__ = "skills"
@@ -293,6 +300,12 @@ class Task(Base):
     cascade="all, delete-orphan",
     )
 
+    resources = relationship(
+        "TaskResource",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
+
 
 class TaskRequiredSkill(Base):
     __tablename__ = "task_required_skills"
@@ -403,3 +416,27 @@ class TaskOutcome(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     task = relationship("Task", back_populates="outcome")
+
+
+class TaskResource(Base):
+    __tablename__ = "task_resources"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    task_id = Column(BigInteger, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False)
+    uploaded_by = Column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    original_filename = Column(String(255), nullable=False)
+    stored_filename = Column(String(255), nullable=False)
+    file_path = Column(Text, nullable=False)
+    content_type = Column(String(255), nullable=True)
+    size_bytes = Column(BigInteger, nullable=False, default=0)
+    note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    task = relationship("Task", back_populates="resources")
+    uploaded_by_user = relationship(
+        "User",
+        back_populates="uploaded_task_resources",
+        foreign_keys=[uploaded_by],
+    )

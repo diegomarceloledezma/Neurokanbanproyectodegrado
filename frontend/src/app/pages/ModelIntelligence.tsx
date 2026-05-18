@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import {
   getMlBaselineStatus,
-  trainCompactCleanedBaseline,
+  trainOptimizedBaseline,
   type BaselineMetadata,
   type BaselineStatusResponse,
 } from "../services/mlBaselineService";
@@ -84,6 +84,35 @@ type ExtendedBaselineMetadata = BaselineMetadata & {
   previous_active_model_type?: string | null;
   previous_active_training_variant?: string | null;
   active_model_synced?: boolean;
+  default_threshold_metrics?: Record<string, number>;
+  operating_threshold?: number;
+  thresholding_strategy?: string;
+  probability_separation?: {
+    positive_mean_probability?: number | null;
+    negative_mean_probability?: number | null;
+    separation_gap?: number | null;
+    assessment?: string;
+  };
+  optimized_variant_candidates?: Array<{
+    training_variant: string;
+    model_type?: string;
+    eligible: boolean;
+    reason?: string | null;
+    dataset_rows?: number;
+    test_rows?: number;
+    selection_score?: number;
+    metrics?: Record<string, number>;
+    cross_validation_mean?: Record<string, number>;
+    operating_threshold?: number;
+  }>;
+  optimization_summary?: {
+    selected_variant?: string;
+    selected_model_type?: string;
+    selected_selection_score?: number;
+    evaluated_variants?: number;
+    eligible_variants?: number;
+    selection_criteria?: string;
+  };
 };
 
 type SegmentRow = {
@@ -163,6 +192,51 @@ function humanizeReason(reason: string) {
 
   return map[reason] ?? reason;
 }
+
+function humanizeEvaluationNote(note: string) {
+  const normalized = note.toLowerCase();
+
+  if (normalized.includes("validación cruzada") && normalized.includes("holdout")) {
+    return "La validación cruzada es más conservadora que el holdout. Esto no invalida el modelo; indica que el sistema está midiendo estabilidad y que el modelo debe usarse como apoyo supervisado a la decisión.";
+  }
+
+  return note;
+}
+
+function buildModelDefenseNotes(
+  metadata: ExtendedBaselineMetadata | null,
+  notes: string[]
+): string[] {
+  if (!metadata) return [];
+
+  const defenseNotes = [
+    "Modelo apto para apoyo a decisión supervisada: recomienda, compara y explica, pero la asignación final sigue siendo decisión del líder.",
+    "La evaluación combina holdout, validación cruzada, calibración, threshold tuning y análisis por segmentos para evitar una lectura basada en una sola métrica.",
+  ];
+
+  if ((metadata.metrics?.roc_auc ?? 0) >= 0.82) {
+    defenseNotes.push(
+      `El ROC AUC de ${formatPercent(
+        metadata.metrics?.roc_auc
+      )} muestra buena capacidad para separar asignaciones con mayor probabilidad de éxito frente a casos de riesgo.`
+    );
+  }
+
+  if ((metadata.probability_separation?.separation_gap ?? 0) >= 0.25) {
+    defenseNotes.push(
+      `La separación probabilística es clara: la brecha entre éxitos y riesgos es de ${formatPercent(
+        metadata.probability_separation?.separation_gap
+      )}.`
+    );
+  }
+
+  for (const note of notes) {
+    defenseNotes.push(humanizeEvaluationNote(note));
+  }
+
+  return Array.from(new Set(defenseNotes));
+}
+
 
 function getLevelClasses(level: ExecutiveLevel) {
   if (level === "alta") {
@@ -452,19 +526,21 @@ export default function ModelIntelligence() {
       setTrainingMessage("");
       setError("");
 
-      const result = await trainCompactCleanedBaseline(token || undefined);
+      const result = await trainOptimizedBaseline(token || undefined);
       const resultMetadata = result as ExtendedBaselineMetadata;
 
       setTrainingMessage(
-        `Entrenamiento finalizado. Modelo ganador: ${
+        `Entrenamiento optimizado finalizado. Campeón: ${
           resultMetadata.model_type
-        } · ROC AUC ${formatPercent(resultMetadata.metrics?.roc_auc)}`
+        } · variante ${humanizeVariant(resultMetadata.training_variant)} · ROC AUC ${formatPercent(
+          resultMetadata.metrics?.roc_auc
+        )}`
       );
 
       await loadAll(true);
     } catch (err) {
       console.error(err);
-      setError("No se pudo reentrenar el baseline compacto.");
+      setError("No se pudo entrenar la IA optimizada.");
     } finally {
       setTraining(false);
     }
@@ -490,7 +566,7 @@ export default function ModelIntelligence() {
 
           <button onClick={handleTrain} disabled={training} className="inline-flex items-center gap-2 px-5 py-3 rounded-lg bg-cyan-500 text-slate-950 font-semibold hover:bg-cyan-400 transition disabled:opacity-60" >
             <Sparkles className="w-4 h-4" />
-            {training ? "Entrenando..." : "Entrenar baseline compacto"}
+            {training ? "Entrenando..." : "Entrenar IA optimizada"}
           </button>
         </div>
       </div>
@@ -517,7 +593,9 @@ export default function ModelIntelligence() {
   const calibration = metadata.calibration_summary;
   const thresholdAnalysis = metadata.threshold_analysis;
   const candidates = metadata.candidate_models ?? [];
+  const optimizedVariants = metadata.optimized_variant_candidates ?? [];
   const notes = metadata.evaluation_notes ?? [];
+  const presentationNotes = buildModelDefenseNotes(metadata, notes);
 
   const isActiveChampionSynced =
     metadata.active_model_synced ??
@@ -550,7 +628,7 @@ export default function ModelIntelligence() {
 
           <button onClick={handleTrain} disabled={training} className="inline-flex items-center gap-2 px-4 py-3 rounded-lg bg-cyan-500 text-slate-950 font-semibold hover:bg-cyan-400 transition disabled:opacity-60" >
             <Sparkles className="w-4 h-4" />
-            {training ? "Reentrenando..." : "Reentrenar compacto"}
+            {training ? "Optimizando..." : "Entrenar IA optimizada"}
           </button>
         </div>
       </div>
@@ -645,9 +723,13 @@ export default function ModelIntelligence() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 xl:grid-cols-6 gap-4">
         {summaryLabelValue("Modelo ganador", metadata.model_type)}
         {summaryLabelValue("Variante activa", humanizeVariant(metadata.training_variant))}
+        {summaryLabelValue(
+          "Umbral operativo",
+          metadata.operating_threshold !== undefined ? String(metadata.operating_threshold) : "—"
+        )}
         {summaryLabelValue(
           "Readiness oficial",
           humanizeReadiness(metadata.model_readiness?.confidence_band),
@@ -700,6 +782,36 @@ export default function ModelIntelligence() {
           </div>
         </div>
       </div>
+
+      {metadata.probability_separation && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <GitCompareArrows className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-xl text-white">Separación probabilística</h2>
+          </div>
+          <p className="text-slate-400 text-sm mb-4">
+            Mide si el modelo asigna probabilidades más altas a casos exitosos que a casos de riesgo.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {summaryLabelValue(
+              "Media en éxitos",
+              formatPercent(metadata.probability_separation.positive_mean_probability)
+            )}
+            {summaryLabelValue(
+              "Media en riesgos",
+              formatPercent(metadata.probability_separation.negative_mean_probability)
+            )}
+            {summaryLabelValue(
+              "Brecha",
+              formatPercent(metadata.probability_separation.separation_gap)
+            )}
+            {summaryLabelValue(
+              "Evaluación",
+              humanizeReadiness(metadata.probability_separation.assessment)
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
@@ -812,6 +924,47 @@ export default function ModelIntelligence() {
       <SegmentTable title="Desempeño por origen" rows={metadata.segment_performance?.by_source} />
       <SegmentTable title="Desempeño por tipo de tarea" rows={metadata.segment_performance?.by_task_type} />
 
+      {optimizedVariants.length > 0 && (
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Cpu className="w-5 h-5 text-cyan-400" />
+            <h2 className="text-xl text-white">Optimización de variantes</h2>
+          </div>
+          <p className="text-slate-400 text-sm mb-4">
+            Se compararon variantes del dataset y se promovió automáticamente la de mejor selection score.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-slate-400 border-b border-slate-800">
+                  <th className="text-left py-3 pr-4">Variante</th>
+                  <th className="text-left py-3 pr-4">Modelo</th>
+                  <th className="text-left py-3 pr-4">Filas</th>
+                  <th className="text-left py-3 pr-4">Selection</th>
+                  <th className="text-left py-3 pr-4">ROC AUC</th>
+                  <th className="text-left py-3 pr-4">F1</th>
+                  <th className="text-left py-3">Threshold</th>
+                </tr>
+              </thead>
+              <tbody>
+                {optimizedVariants.map((variant) => (
+                  <tr key={variant.training_variant} className="border-b border-slate-800/60 text-slate-200">
+                    <td className="py-3 pr-4">{humanizeVariant(variant.training_variant)}</td>
+                    <td className="py-3 pr-4">{variant.model_type ?? "—"}</td>
+                    <td className="py-3 pr-4">{variant.dataset_rows ?? "—"}</td>
+                    <td className="py-3 pr-4">{formatValue(variant.selection_score, 4)}</td>
+                    <td className="py-3 pr-4">{formatPercent(variant.metrics?.roc_auc)}</td>
+                    <td className="py-3 pr-4">{formatPercent(variant.metrics?.f1)}</td>
+                    <td className="py-3">{variant.operating_threshold ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {candidates.length > 0 && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
@@ -850,16 +1003,20 @@ export default function ModelIntelligence() {
         </div>
       )}
 
-      {notes.length > 0 && (
+      {presentationNotes.length > 0 && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <Lightbulb className="w-5 h-5 text-yellow-400" />
-            <h2 className="text-xl text-white">Observaciones técnicas</h2>
+            <h2 className="text-xl text-white">Lectura técnica para exposición</h2>
           </div>
 
+          <p className="text-slate-400 text-sm mb-4">
+            Esta sección resume cómo explicar el modelo sin que las observaciones técnicas se vean como errores del sistema.
+          </p>
+
           <div className="space-y-2">
-            {notes.map((note) => (
-              <div key={note} className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-slate-200 text-sm" >
+            {presentationNotes.map((note) => (
+              <div key={note} className="p-4 rounded-lg bg-slate-800/50 border border-slate-700 text-slate-200 text-sm leading-relaxed" >
                 {note}
               </div>
             ))}

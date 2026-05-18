@@ -24,6 +24,29 @@ def _safe_ratio(matching_skills_count: int | None, required_skills_count: int | 
     return round(float(matching_skills_count) / float(required_skills_count), 4)
 
 
+def _normalize_matching_ratio(value: float | int | None) -> float:
+    """
+    Normaliza el ratio de coincidencia de habilidades al rango 0..1.
+
+    En versiones anteriores algunos registros sintéticos podían guardar este
+    dato como porcentaje (por ejemplo 66.0) mientras que el motor de
+    recomendación usa proporción (0.66). Esta normalización evita perder filas
+    útiles del dataset por una diferencia de escala.
+    """
+    if value is None:
+        return 0.0
+
+    try:
+        ratio = float(value)
+    except Exception:
+        return 0.0
+
+    if ratio > 1.0 and ratio <= 100.0:
+        ratio = ratio / 100.0
+
+    return round(max(0.0, min(1.0, ratio)), 4)
+
+
 def _compute_success_score(
     *,
     finished_on_time: bool | None,
@@ -245,11 +268,12 @@ def build_training_dataset_rows(db: Session) -> list[dict[str, Any]]:
     user_history: dict[int, dict[str, Any]] = defaultdict(_default_history_state)
 
     for history, task, outcome in history_items:
-        matching_ratio = (
+        raw_matching_ratio = (
             float(history.matching_ratio)
             if history.matching_ratio is not None
             else _safe_ratio(history.matching_skills_count, history.required_skills_count)
         )
+        matching_ratio = _normalize_matching_ratio(raw_matching_ratio)
 
         success_score = (
             float(outcome.success_score)

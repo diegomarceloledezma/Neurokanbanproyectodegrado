@@ -8,6 +8,7 @@ from app.services.ml_baseline_service import (
     get_baseline_status,
     revalidate_active_champion,
     train_baseline_model_from_rows,
+    train_optimized_baseline_from_database,
 )
 from app.services.training_dataset_service import (
     build_clean_training_dataset_rows,
@@ -183,6 +184,19 @@ def train_baseline_from_history_recalibrated_source_aware(
     result["repaired_snapshot_rows"] = dataset["repaired_snapshot_rows"]
     result["class_balance"] = dataset["class_balance"]
     return result
+
+
+@router.post("/train-optimized")
+def train_optimized_baseline(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    _require_model_access(current_user)
+
+    try:
+        return train_optimized_baseline_from_database(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/revalidate-champion")

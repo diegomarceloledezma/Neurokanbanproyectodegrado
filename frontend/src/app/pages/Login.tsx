@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Eye, EyeOff, Lock, Mail } from "lucide-react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { login } from "../services/authService";
 import { isAuthenticated } from "../services/sessionService";
 
@@ -8,11 +8,37 @@ type LocationState = {
   from?: string;
 };
 
+function sanitizeRedirectTarget(target?: string | null): string {
+  if (!target) return "/";
+  if (!target.startsWith("/") || target.startsWith("//")) return "/";
+  if (target.startsWith("/login")) return "/";
+  return target;
+}
+
+function getSessionMessage(reason?: string | null): string {
+  if (reason === "expired") {
+    return "Tu sesión expiró. Vuelve a iniciar sesión para continuar trabajando en NeuroKanban.";
+  }
+
+  if (reason === "invalid") {
+    return "Tu sesión ya no es válida. Por seguridad, inicia sesión nuevamente.";
+  }
+
+  return "";
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
 
-  const redirectTarget = (location.state as LocationState | null)?.from ?? "/";
+  const redirectTarget = useMemo(() => {
+    const stateTarget = (location.state as LocationState | null)?.from;
+    const queryTarget = searchParams.get("from");
+    return sanitizeRedirectTarget(queryTarget ?? stateTarget ?? "/");
+  }, [location.state, searchParams]);
+
+  const sessionMessage = getSessionMessage(searchParams.get("session"));
 
   const [usernameOrEmail, setUsernameOrEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,9 +48,9 @@ export default function Login() {
 
   useEffect(() => {
     if (isAuthenticated()) {
-      navigate("/", { replace: true });
+      navigate(redirectTarget, { replace: true });
     }
-  }, [navigate]);
+  }, [navigate, redirectTarget]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -55,6 +81,12 @@ export default function Login() {
             Accede a NeuroKanban con tu usuario o correo institucional.
           </p>
         </div>
+
+        {sessionMessage && (
+          <div className="mb-5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-3 text-cyan-200 text-sm">
+            {sessionMessage}
+          </div>
+        )}
 
         {error && (
           <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300 text-sm">

@@ -24,8 +24,9 @@ from app.routes.tasks import router as tasks_router
 from app.routes.training_data import router as training_data_router
 from app.routes.users import router as users_router
 
-BASE_DIR = Path(__file__).resolve().parent
-UPLOADS_DIR = BASE_DIR / "uploads"
+APP_DIR = Path(__file__).resolve().parent
+BACKEND_DIR = APP_DIR.parent
+UPLOADS_DIR = BACKEND_DIR / "uploads"
 TASK_RESOURCES_DIR = UPLOADS_DIR / "task_resources"
 
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)

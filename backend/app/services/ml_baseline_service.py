@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.base import clone
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, GradientBoostingClassifier, RandomForestClassifier
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -191,7 +191,8 @@ def _build_preprocessor(
         transformers=[
             ("num", numeric_transformer, numeric_features),
             ("cat", categorical_transformer, categorical_features),
-        ]
+        ],
+        sparse_threshold=0.0,
     )
 
 
@@ -236,6 +237,16 @@ def _candidate_classifiers() -> list[tuple[str, Any]]:
                 class_weight="balanced_subsample",
                 random_state=42,
                 n_jobs=-1,
+            ),
+        ),
+        (
+            "GradientBoosting",
+            GradientBoostingClassifier(
+                n_estimators=180,
+                learning_rate=0.045,
+                max_depth=2,
+                subsample=0.88,
+                random_state=42,
             ),
         ),
         (
@@ -380,17 +391,32 @@ def _metrics_at_threshold(y_true, y_prob, threshold: float) -> dict[str, float]:
 
 
 def _threshold_analysis(y_true, y_prob) -> dict[str, Any]:
-    thresholds = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
+    thresholds = [
+        0.25,
+        0.30,
+        0.35,
+        0.40,
+        0.45,
+        0.50,
+        0.55,
+        0.60,
+        0.65,
+        0.70,
+        0.75,
+    ]
     evaluations: list[dict[str, Any]] = []
 
     best_f1_item = None
     best_balanced_item = None
+    best_operating_item = None
 
     for threshold in thresholds:
         metrics = _metrics_at_threshold(y_true, y_prob, threshold)
+        operating_score = (metrics["f1"] * 0.52) + (metrics["balanced_accuracy"] * 0.48)
         item = {
             "threshold": round(float(threshold), 2),
             "metrics": metrics,
+            "operating_score": round(float(operating_score), 4),
         }
         evaluations.append(item)
 
@@ -404,11 +430,18 @@ def _threshold_analysis(y_true, y_prob) -> dict[str, Any]:
         ):
             best_balanced_item = item
 
+        if (
+            best_operating_item is None
+            or item["operating_score"] > best_operating_item["operating_score"]
+        ):
+            best_operating_item = item
+
+    default_item = next(item for item in evaluations if item["threshold"] == 0.5)
+    selected_item = best_operating_item or default_item
+
     return {
         "default_threshold": 0.5,
-        "default_metrics": next(
-            item["metrics"] for item in evaluations if item["threshold"] == 0.5
-        ),
+        "default_metrics": default_item["metrics"],
         "best_f1_threshold": best_f1_item["threshold"] if best_f1_item else 0.5,
         "best_f1_metrics": best_f1_item["metrics"] if best_f1_item else {},
         "best_balanced_threshold": (
@@ -417,6 +450,9 @@ def _threshold_analysis(y_true, y_prob) -> dict[str, Any]:
         "best_balanced_metrics": (
             best_balanced_item["metrics"] if best_balanced_item else {}
         ),
+        "best_operating_threshold": selected_item["threshold"],
+        "best_operating_metrics": selected_item["metrics"],
+        "thresholding_strategy": "grid_search_f1_balanced_accuracy",
         "grid": evaluations,
     }
 
@@ -468,6 +504,40 @@ def _calibration_summary(y_true, y_prob) -> dict[str, Any]:
         "brier_score": brier,
         "expected_calibration_error": round(float(calibration_error), 4),
         "buckets": bucket_rows,
+    }
+
+
+def _probability_separation_summary(y_true, y_prob) -> dict[str, Any]:
+    y_true_arr = np.array(y_true, dtype=int)
+    y_prob_arr = np.array(y_prob, dtype=float)
+
+    positive_probs = y_prob_arr[y_true_arr == 1]
+    negative_probs = y_prob_arr[y_true_arr == 0]
+
+    if len(positive_probs) == 0 or len(negative_probs) == 0:
+        return {
+            "positive_mean_probability": None,
+            "negative_mean_probability": None,
+            "separation_gap": None,
+            "assessment": "sin_datos_suficientes",
+        }
+
+    positive_mean = float(positive_probs.mean())
+    negative_mean = float(negative_probs.mean())
+    gap = positive_mean - negative_mean
+
+    if gap >= 0.32:
+        assessment = "alta"
+    elif gap >= 0.20:
+        assessment = "media"
+    else:
+        assessment = "baja"
+
+    return {
+        "positive_mean_probability": round(positive_mean, 4),
+        "negative_mean_probability": round(negative_mean, 4),
+        "separation_gap": round(float(gap), 4),
+        "assessment": assessment,
     }
 
 
@@ -528,8 +598,10 @@ def _cross_validation_summary(
         sample_weights = _build_sample_weights(X_train, y_train)
         model.fit(X_train, y_train, classifier__sample_weight=sample_weights)
 
-        y_pred = model.predict(X_test)
         y_prob = model.predict_proba(X_test)[:, 1]
+        fold_threshold_summary = _threshold_analysis(y_test, y_prob)
+        fold_threshold = float(fold_threshold_summary.get("best_operating_threshold") or 0.5)
+        y_pred = (np.array(y_prob) >= fold_threshold).astype(int)
 
         fold_metrics = _binary_metrics(y_test, y_pred, y_prob)
         for key, value in fold_metrics.items():
@@ -884,10 +956,14 @@ def _fit_single_candidate(
     sample_weights = _build_sample_weights(X_train, y_train)
     pipeline.fit(X_train, y_train, classifier__sample_weight=sample_weights)
 
-    y_pred = pipeline.predict(X_test)
     y_prob = pipeline.predict_proba(X_test)[:, 1]
+    threshold_analysis = _threshold_analysis(y_test, y_prob)
+    operating_threshold = float(threshold_analysis.get("best_operating_threshold") or 0.5)
+    y_pred = (np.array(y_prob) >= operating_threshold).astype(int)
 
     metrics = _binary_metrics(y_test, y_pred, y_prob)
+    default_threshold_metrics = threshold_analysis.get("default_metrics", {})
+    probability_separation = _probability_separation_summary(y_test, y_prob)
     cross_validation = _cross_validation_summary(
         X=X,
         y=y,
@@ -897,7 +973,6 @@ def _fit_single_candidate(
         random_state=random_state,
     )
     calibration_summary = _calibration_summary(y_test, y_prob)
-    threshold_analysis = _threshold_analysis(y_test, y_prob)
     segment_performance = _segment_performance(
         X_test=X_test,
         y_test=y_test,
@@ -954,6 +1029,10 @@ def _fit_single_candidate(
         "test_size": test_size,
         "random_state": random_state,
         "metrics": metrics,
+        "default_threshold_metrics": default_threshold_metrics,
+        "operating_threshold": operating_threshold,
+        "thresholding_strategy": threshold_analysis.get("thresholding_strategy"),
+        "probability_separation": probability_separation,
         "model_readiness": model_readiness,
         "numeric_features": numeric_features,
         "categorical_features": categorical_features,
@@ -1085,6 +1164,7 @@ def train_baseline_model_from_rows(
     random_state: int = 42,
     training_variant: str = "raw_rows",
     promote_only_if_better: bool = False,
+    persist_model: bool = True,
 ) -> dict[str, Any]:
     df, numeric_features, categorical_features = _prepare_dataframe(rows, training_variant)
 
@@ -1138,6 +1218,16 @@ def train_baseline_model_from_rows(
     ]
 
     current_metadata = load_baseline_metadata()
+
+    if not persist_model:
+        metadata["promoted"] = False
+        metadata["promotion_reason"] = "evaluacion_sin_persistencia"
+        metadata = _attach_active_model_context(
+            metadata,
+            current_metadata,
+            promoted=False,
+        )
+        return _json_ready(metadata)
 
     if promote_only_if_better:
         promoted, reason = _can_promote_candidate(
@@ -1277,6 +1367,150 @@ def predict_success_probability_from_features(
     return round(float(probability), 4)
 
 
+def _summarize_variant_candidate(metadata: dict[str, Any], *, eligible: bool = True, reason: str | None = None) -> dict[str, Any]:
+    return {
+        "training_variant": metadata.get("training_variant"),
+        "model_type": metadata.get("model_type"),
+        "eligible": eligible,
+        "reason": reason,
+        "dataset_rows": metadata.get("dataset_rows"),
+        "test_rows": metadata.get("test_rows"),
+        "selection_score": metadata.get("selection_score"),
+        "metrics": metadata.get("metrics", {}),
+        "cross_validation_mean": (metadata.get("cross_validation", {}) or {}).get("metrics_mean", {}),
+        "model_readiness": metadata.get("model_readiness", {}),
+        "operating_threshold": metadata.get("operating_threshold"),
+    }
+
+
+def train_optimized_baseline_from_database(db: Session) -> dict[str, Any]:
+    """
+    Entrena varias variantes defendibles y promueve automáticamente la mejor.
+
+    A diferencia del botón antiguo, que entrenaba una sola variante compacta,
+    esta rutina compara compacto depurado, trusted source-aware y recalibrado
+    source-aware. Así el proyecto puede mostrar una IA más seria: selección de
+    campeón, validación cruzada, calibración, segmentación y umbral operativo.
+    """
+    from app.services.training_dataset_service import (
+        build_clean_training_dataset_rows,
+        build_recalibrated_training_dataset_rows,
+        build_trusted_training_dataset_rows,
+    )
+
+    dataset_clean = build_clean_training_dataset_rows(db)
+    dataset_trusted = build_trusted_training_dataset_rows(db)
+    dataset_recalibrated = build_recalibrated_training_dataset_rows(db)
+
+    variant_specs = [
+        {
+            "training_variant": "compact_cleaned_history",
+            "project_name": "NeuroKanban - IA optimizada compacto depurado",
+            "source_name": "historical_internal_data_cleaned",
+            "rows": dataset_clean["clean_rows"],
+            "dataset_summary": {
+                "raw_rows": len(dataset_clean["raw_rows"]),
+                "usable_rows": len(dataset_clean["clean_rows"]),
+                "excluded_rows": len(dataset_clean["excluded_rows"]),
+                "class_balance": dataset_clean["class_balance"],
+            },
+        },
+        {
+            "training_variant": "trusted_source_aware_history",
+            "project_name": "NeuroKanban - IA optimizada trusted source-aware",
+            "source_name": "historical_internal_data_trusted",
+            "rows": dataset_trusted["trusted_rows"],
+            "dataset_summary": {
+                "raw_rows": len(dataset_trusted["raw_rows"]),
+                "usable_rows": len(dataset_trusted["trusted_rows"]),
+                "excluded_rows": len(dataset_trusted["excluded_rows"]),
+                "class_balance": dataset_trusted["class_balance"],
+            },
+        },
+        {
+            "training_variant": "recalibrated_source_aware_history",
+            "project_name": "NeuroKanban - IA optimizada recalibrado source-aware",
+            "source_name": "historical_internal_data_recalibrated",
+            "rows": dataset_recalibrated["recalibrated_rows"],
+            "dataset_summary": {
+                "raw_rows": len(dataset_recalibrated["raw_rows"]),
+                "usable_rows": len(dataset_recalibrated["recalibrated_rows"]),
+                "excluded_rows": len(dataset_recalibrated["excluded_rows"]),
+                "repaired_snapshot_rows": dataset_recalibrated["repaired_snapshot_rows"],
+                "class_balance": dataset_recalibrated["class_balance"],
+            },
+        },
+    ]
+
+    evaluated_variants: list[dict[str, Any]] = []
+    eligible_variants: list[dict[str, Any]] = []
+
+    for spec in variant_specs:
+        rows = spec["rows"]
+        if len(rows) < 30:
+            evaluated_variants.append(
+                {
+                    "training_variant": spec["training_variant"],
+                    "eligible": False,
+                    "reason": "dataset_insuficiente",
+                    "dataset_rows": len(rows),
+                    "dataset_summary": spec["dataset_summary"],
+                }
+            )
+            continue
+
+        metadata = train_baseline_model_from_rows(
+            rows=rows,
+            project_id=None,
+            project_name=spec["project_name"],
+            source_name=spec["source_name"],
+            training_variant=spec["training_variant"],
+            promote_only_if_better=False,
+            persist_model=False,
+        )
+        metadata["dataset_summary"] = spec["dataset_summary"]
+        summary = _summarize_variant_candidate(metadata)
+        summary["dataset_summary"] = spec["dataset_summary"]
+        evaluated_variants.append(summary)
+        eligible_variants.append({"spec": spec, "metadata": metadata})
+
+    if not eligible_variants:
+        raise ValueError("No existen datasets elegibles para entrenar la IA optimizada")
+
+    best = max(
+        eligible_variants,
+        key=lambda item: float(item["metadata"].get("selection_score") or 0.0),
+    )
+    best_spec = best["spec"]
+
+    final_metadata = train_baseline_model_from_rows(
+        rows=best_spec["rows"],
+        project_id=None,
+        project_name=best_spec["project_name"],
+        source_name=best_spec["source_name"],
+        training_variant=best_spec["training_variant"],
+        promote_only_if_better=False,
+        persist_model=True,
+    )
+
+    final_metadata["optimized_variant_candidates"] = evaluated_variants
+    final_metadata["optimization_summary"] = {
+        "selected_variant": final_metadata.get("training_variant"),
+        "selected_model_type": final_metadata.get("model_type"),
+        "selected_selection_score": final_metadata.get("selection_score"),
+        "evaluated_variants": len(evaluated_variants),
+        "eligible_variants": len(eligible_variants),
+        "selection_criteria": "mayor selection_score con métricas, calibración y robustez segmentada",
+    }
+
+    METADATA_PATH.write_text(
+        json.dumps(_json_ready(final_metadata), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    return _json_ready(final_metadata)
+
+
 def revalidate_active_champion(db: Session) -> dict[str, Any]:
     from app.services.training_dataset_service import (
         build_clean_training_dataset_rows,
@@ -1308,6 +1542,7 @@ def revalidate_active_champion(db: Session) -> dict[str, Any]:
     ]
 
     candidates: list[dict[str, Any]] = []
+    eligible_candidates: list[dict[str, Any]] = []
 
     for variant in variants:
         rows = variant["rows"]
@@ -1329,21 +1564,23 @@ def revalidate_active_champion(db: Session) -> dict[str, Any]:
             source_name=variant["source_name"],
             training_variant=variant["training_variant"],
             promote_only_if_better=False,
+            persist_model=False,
         )
-        candidates.append(
-            {
-                "training_variant": variant["training_variant"],
-                "eligible": True,
-                "selection_score": result["selection_score"],
-                "metrics": result["metrics"],
-                "test_rows": result["test_rows"],
-                "cross_validation": result.get("cross_validation", {}),
-                "calibration_summary": result.get("calibration_summary", {}),
-                "metadata": result,
-            }
-        )
-
-    eligible_candidates = [item for item in candidates if item.get("eligible")]
+        candidate = {
+            "training_variant": variant["training_variant"],
+            "eligible": True,
+            "selection_score": result["selection_score"],
+            "metrics": result["metrics"],
+            "test_rows": result["test_rows"],
+            "cross_validation": result.get("cross_validation", {}),
+            "calibration_summary": result.get("calibration_summary", {}),
+            "metadata": result,
+            "rows": rows,
+            "project_name": variant["project_name"],
+            "source_name": variant["source_name"],
+        }
+        candidates.append(candidate)
+        eligible_candidates.append(candidate)
 
     if not eligible_candidates:
         return {
@@ -1365,30 +1602,33 @@ def revalidate_active_champion(db: Session) -> dict[str, Any]:
     )
 
     if can_promote:
-        model = load_baseline_model()
-        if model is None:
-            # train_baseline_model_from_rows already persisted the most recent trained model,
-            # so this branch is only defensive.
-            pass
+        persisted = train_baseline_model_from_rows(
+            rows=best_candidate["rows"],
+            project_id=None,
+            project_name=best_candidate["project_name"],
+            source_name=best_candidate["source_name"],
+            training_variant=best_candidate["training_variant"],
+            promote_only_if_better=False,
+            persist_model=True,
+        )
         return {
             "revalidated": True,
             "reason": reason,
-            "current_active_variant": best_metadata["training_variant"],
-            "champion_score": best_metadata["selection_score"],
-            "candidates": candidates,
+            "current_active_variant": persisted["training_variant"],
+            "champion_score": persisted["selection_score"],
+            "candidates": [
+                {key: value for key, value in item.items() if key not in {"metadata", "rows"}}
+                for item in candidates
+            ],
         }
-
-    # Restore previous champion if current exists and best candidate should not be promoted
-    if current_metadata:
-        METADATA_PATH.write_text(
-            json.dumps(_json_ready(current_metadata), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
 
     return {
         "revalidated": False,
         "reason": reason,
         "current_active_variant": current_metadata.get("training_variant") if current_metadata else None,
         "champion_score": current_metadata.get("selection_score") if current_metadata else None,
-        "candidates": candidates,
+        "candidates": [
+            {key: value for key, value in item.items() if key not in {"metadata", "rows"}}
+            for item in candidates
+        ],
     }

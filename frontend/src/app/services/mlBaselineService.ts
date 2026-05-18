@@ -137,6 +137,36 @@ export type BaselineMetadata = {
   previous_active_model_type?: string | null;
   previous_active_training_variant?: string | null;
   active_model_synced?: boolean;
+
+  default_threshold_metrics?: Record<string, number>;
+  operating_threshold?: number;
+  thresholding_strategy?: string;
+  probability_separation?: {
+    positive_mean_probability?: number | null;
+    negative_mean_probability?: number | null;
+    separation_gap?: number | null;
+    assessment?: string;
+  };
+  optimized_variant_candidates?: Array<{
+    training_variant: string;
+    model_type?: string;
+    eligible: boolean;
+    reason?: string | null;
+    dataset_rows?: number;
+    test_rows?: number;
+    selection_score?: number;
+    metrics?: Record<string, number>;
+    cross_validation_mean?: Record<string, number>;
+    operating_threshold?: number;
+  }>;
+  optimization_summary?: {
+    selected_variant?: string;
+    selected_model_type?: string;
+    selected_selection_score?: number;
+    evaluated_variants?: number;
+    eligible_variants?: number;
+    selection_criteria?: string;
+  };
 };
 
 export type BaselineStatusResponse = {
@@ -202,6 +232,27 @@ export async function trainCompactCleanedBaseline(
 
   if (!response.ok) {
     await parseApiError(response, "No se pudo reentrenar el modelo compacto.");
+  }
+
+  return response.json();
+}
+
+export async function trainOptimizedBaseline(
+  token?: string
+): Promise<TrainBaselineResponse> {
+  const authToken = token ?? getAccessToken();
+
+  const response = await fetch(`${API_BASE_URL}/ml-baseline/train-optimized`, {
+    method: "POST",
+    headers: authToken
+      ? {
+          Authorization: `Bearer ${authToken}`,
+        }
+      : undefined,
+  });
+
+  if (!response.ok) {
+    await parseApiError(response, "No se pudo entrenar el modelo optimizado.");
   }
 
   return response.json();

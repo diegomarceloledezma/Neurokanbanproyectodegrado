@@ -1,6 +1,10 @@
-import { Navigate } from "react-router";
+import { Navigate, useLocation } from "react-router";
 import type { ReactNode } from "react";
-import { getAccessToken, getCurrentUser } from "../services/sessionService";
+import {
+  clearSession,
+  getAccessToken,
+  getCurrentUser,
+} from "../services/sessionService";
 
 type ProtectedRouteProps = {
   children: ReactNode;
@@ -11,17 +15,27 @@ export default function ProtectedRoute({
   children,
   allowedRoles,
 }: ProtectedRouteProps) {
+  const location = useLocation();
   const token = getAccessToken();
   const currentUser = getCurrentUser();
 
+  const redirectState = {
+    from: `${location.pathname}${location.search}`,
+  };
+
   if (!token) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login?session=expired" replace state={redirectState} />;
+  }
+
+  if (!currentUser) {
+    clearSession();
+    return <Navigate to="/login?session=invalid" replace state={redirectState} />;
   }
 
   if (allowedRoles && allowedRoles.length > 0) {
     const currentRole = (
-      currentUser?.role_name ||
-      currentUser?.global_role?.name ||
+      currentUser.role_name ||
+      currentUser.global_role?.name ||
       ""
     ).toLowerCase();
 

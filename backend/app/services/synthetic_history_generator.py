@@ -342,9 +342,9 @@ def _component_scores(
         _clamp((100 - current_load) * 0.85 + max(0, 100 - active_tasks * 12) * 0.15)
     )
 
-    matching_ratio = _round2((matching_count / required_count) * 100) if required_count > 0 else 0.0
-    skill_match_noise = rng.uniform(-6, 6)
-    skill_match_score = _round2(_clamp(matching_ratio + skill_match_noise, 0, 100))
+    matching_ratio = round((matching_count / required_count), 4) if required_count > 0 else 0.0
+    skill_match_noise = rng.uniform(-5, 5)
+    skill_match_score = _round2(_clamp((matching_ratio * 100) + skill_match_noise, 0, 100))
 
     performance_score = _round2(
         _clamp(
@@ -425,20 +425,25 @@ def _outcome_from_features(
     complexity: int,
     matching_ratio: float,
 ) -> tuple[bool, float, int, bool, float, int]:
-    success_probability = 0.18
-    success_probability += skill_match_score / 100 * 0.28
-    success_probability += workload_score / 100 * 0.16
-    success_probability += availability_score / 100 * 0.14
+    # Probabilidad calibrada con una relación más clara entre variables y outcome.
+    # Esto mejora la utilidad del dataset sintético para entrenar un baseline defendible
+    # sin volverlo perfecto ni artificialmente determinista.
+    success_probability = 0.12
+    success_probability += skill_match_score / 100 * 0.32
+    success_probability += workload_score / 100 * 0.17
+    success_probability += availability_score / 100 * 0.15
     success_probability += performance_score / 100 * 0.18
-    success_probability += 0.04 if source == "recommended" else 0.0
-    success_probability += 0.02 if source == "hybrid" else 0.0
+    success_probability += 0.05 if source == "recommended" else 0.0
+    success_probability += 0.03 if source == "hybrid" else 0.0
     success_probability += 0.03 if strategy == "balance" else 0.0
-    success_probability += 0.02 if strategy == "efficiency" and skill_match_score >= 60 else 0.0
-    success_probability -= 0.05 if priority == "critical" else 0.0
-    success_probability -= max(0, complexity - 3) * 0.05
-    success_probability -= 0.06 if matching_ratio == 0 else 0.0
-    success_probability += rng.uniform(-0.06, 0.06)
-    success_probability = max(0.08, min(0.84, success_probability))
+    success_probability += 0.03 if strategy == "efficiency" and skill_match_score >= 60 else 0.0
+    success_probability += 0.02 if strategy == "urgency" and availability_score >= 65 else 0.0
+    success_probability -= 0.06 if priority == "critical" else 0.0
+    success_probability -= max(0, complexity - 3) * 0.055
+    success_probability -= 0.08 if matching_ratio <= 0.0 else 0.0
+    success_probability -= 0.04 if matching_ratio < 0.34 and complexity >= 4 else 0.0
+    success_probability += rng.uniform(-0.035, 0.035)
+    success_probability = max(0.05, min(0.92, success_probability))
 
     success = rng.random() < success_probability
 
@@ -448,7 +453,7 @@ def _outcome_from_features(
             delay_hours = 0.0
         else:
             delay_hours = _round2(rng.uniform(0.5, 3.2))
-        quality_floor = 2 if matching_ratio < 50 else 3
+        quality_floor = 2 if matching_ratio < 0.5 else 3
         quality_score = int(rng.randint(quality_floor, 4))
         had_rework = rng.random() < (0.18 if strategy != "learning" else 0.28)
     else:
@@ -457,7 +462,7 @@ def _outcome_from_features(
             delay_hours = 0.0
         else:
             delay_hours = _round2(rng.uniform(2.0, 12.5))
-        quality_score = int(rng.randint(1, 3 if matching_ratio >= 50 else 2))
+        quality_score = int(rng.randint(1, 3 if matching_ratio >= 0.5 else 2))
         had_rework = rng.random() < 0.62
 
     success_score = compute_success_score(
@@ -604,11 +609,29 @@ def generate_synthetic_history(
     task_type_distribution: dict[str, int] = {key: 0 for key in TASK_TYPE_WEIGHTS}
     sample_task_ids: list[int] = []
 
+    task_type_cycle = list(TASK_TYPE_WEIGHTS.keys())
+    strategy_cycle = list(STRATEGY_WEIGHTS.keys())
+    source_cycle = list(SOURCE_WEIGHTS.keys())
+
     for index in range(records_count):
-        task_type = _weighted_choice(rng, TASK_TYPE_WEIGHTS)
+        # Mantiene diversidad real por segmentos para evitar que el entrenamiento
+        # quede débil en bug, design, learning o benchmark por falta de cobertura.
+        task_type = (
+            task_type_cycle[index % len(task_type_cycle)]
+            if rng.random() < 0.72
+            else _weighted_choice(rng, TASK_TYPE_WEIGHTS)
+        )
         priority = _weighted_choice(rng, PRIORITY_WEIGHTS)
-        strategy = _weighted_choice(rng, STRATEGY_WEIGHTS)
-        source = _weighted_choice(rng, SOURCE_WEIGHTS)
+        strategy = (
+            strategy_cycle[index % len(strategy_cycle)]
+            if rng.random() < 0.70
+            else _weighted_choice(rng, STRATEGY_WEIGHTS)
+        )
+        source = (
+            source_cycle[index % len(source_cycle)]
+            if rng.random() < 0.70
+            else _weighted_choice(rng, SOURCE_WEIGHTS)
+        )
         recommendation_used = source != "manual"
         complexity = _pick_complexity(rng, task_type)
         estimated_hours = _estimated_hours(rng, complexity, priority)

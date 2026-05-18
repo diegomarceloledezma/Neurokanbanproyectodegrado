@@ -244,7 +244,7 @@ def get_training_dataset_summary(
 @router.post("/generate-synthetic-history")
 def generate_synthetic_history_endpoint(
     source_project_id: int = Query(..., ge=1),
-    records_count: int = Query(default=120, ge=20, le=1000),
+    records_count: int = Query(default=240, ge=20, le=1000),
     seed: int = Query(default=42),
     create_dataset_project: bool = Query(default=True),
     db: Session = Depends(get_db),

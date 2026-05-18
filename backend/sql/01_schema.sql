@@ -106,6 +106,23 @@ CREATE TABLE tasks (
     CHECK (status IN ('pending', 'in_progress', 'review', 'done', 'blocked'))
 );
 
+
+CREATE TABLE task_resources (
+    id BIGSERIAL PRIMARY KEY,
+    task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    uploaded_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    original_filename VARCHAR(255) NOT NULL,
+    stored_filename VARCHAR(255) NOT NULL,
+    file_path TEXT NOT NULL,
+    content_type VARCHAR(255),
+    size_bytes BIGINT NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_task_resources_task_id ON task_resources(task_id);
+CREATE INDEX idx_task_resources_uploaded_by ON task_resources(uploaded_by);
+
 CREATE TABLE task_required_skills (
     id BIGSERIAL PRIMARY KEY,
     task_id BIGINT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,

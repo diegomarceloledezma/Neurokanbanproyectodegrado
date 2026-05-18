@@ -8,6 +8,7 @@ import {
   Download,
   FileText,
   History,
+  ImageIcon,
   Paperclip,
   Save,
   Trash2,
@@ -30,6 +31,15 @@ import {
   getTaskAssignmentHistory,
   type TaskAssignmentHistoryItem,
 } from "../services/taskHistoryService";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../components/ui/alert-dialog";
 import { getAccessToken, getCurrentUser } from "../services/sessionService";
 
 function formatDate(value?: string | null) {
@@ -118,11 +128,17 @@ function formatPlain(value?: number | null) {
   return Number(value).toFixed(2);
 }
 
+const MAX_RESOURCE_FILE_SIZE_BYTES = 15 * 1024 * 1024;
+
 function formatBytes(bytes?: number | null) {
   if (bytes === null || bytes === undefined || Number.isNaN(bytes)) return "—";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isImageResource(resource: TaskResourceResponse) {
+  return Boolean(resource.content_type?.toLowerCase().startsWith("image/"));
 }
 
 export default function TaskDetail() {
@@ -148,6 +164,7 @@ export default function TaskDetail() {
   const [resourceNote, setResourceNote] = useState("");
   const [uploadingResource, setUploadingResource] = useState(false);
   const [deletingResourceId, setDeletingResourceId] = useState<number | null>(null);
+  const [resourceToDelete, setResourceToDelete] = useState<TaskResourceResponse | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [savingOutcome, setSavingOutcome] = useState(false);
@@ -263,6 +280,12 @@ export default function TaskDetail() {
 
     if (!taskId || !token || !resourceFile) return;
 
+    if (resourceFile.size > MAX_RESOURCE_FILE_SIZE_BYTES) {
+      setError("El archivo supera el límite de 15 MB.");
+      setSuccessMessage("");
+      return;
+    }
+
     try {
       setUploadingResource(true);
       setError("");
@@ -287,20 +310,22 @@ export default function TaskDetail() {
     }
   };
 
-  const handleDeleteResource = async (resourceId: number) => {
-    if (!token) return;
+  const handleRequestDeleteResource = (resource: TaskResourceResponse) => {
+    setResourceToDelete(resource);
+  };
 
-    const confirmed = window.confirm("¿Deseas eliminar este recurso?");
-    if (!confirmed) return;
+  const handleConfirmDeleteResource = async () => {
+    if (!token || !resourceToDelete) return;
 
     try {
-      setDeletingResourceId(resourceId);
+      setDeletingResourceId(resourceToDelete.id);
       setError("");
       setSuccessMessage("");
 
-      await deleteTaskResource(resourceId, token);
-      setResources((prev) => prev.filter((item) => item.id !== resourceId));
+      await deleteTaskResource(resourceToDelete.id, token);
+      setResources((prev) => prev.filter((item) => item.id !== resourceToDelete.id));
       setSuccessMessage("Recurso eliminado correctamente.");
+      setResourceToDelete(null);
     } catch (err) {
       if (err instanceof Error) setError(err.message);
       else setError("No se pudo eliminar el recurso.");
@@ -481,6 +506,11 @@ export default function TaskDetail() {
             <div>
               <label className="block text-slate-300 text-sm mb-2">Archivo o imagen</label>
               <input id="task-resource-file" type="file" onChange={(e) => setResourceFile(e.target.files?.[0] ?? null)} className="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-white file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500 file:px-3 file:py-2 file:text-slate-950" />
+              {resourceFile && (
+                <p className="text-cyan-300 text-xs mt-2">
+                  Seleccionado: {resourceFile.name} · {formatBytes(resourceFile.size)}
+                </p>
+              )}
               <p className="text-slate-500 text-xs mt-2">Límite sugerido: 15 MB</p>
             </div>
 
@@ -513,7 +543,11 @@ export default function TaskDetail() {
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="flex items-start gap-3">
                       <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3">
-                        <FileText className="w-5 h-5 text-cyan-300" />
+                        {isImageResource(resource) ? (
+                          <ImageIcon className="w-5 h-5 text-cyan-300" />
+                        ) : (
+                          <FileText className="w-5 h-5 text-cyan-300" />
+                        )}
                       </div>
 
                       <div>
@@ -534,13 +568,19 @@ export default function TaskDetail() {
                       </a>
 
                       {canDeleteResource(resource) && (
-                        <button onClick={() => handleDeleteResource(resource.id)} disabled={deletingResourceId === resource.id} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${ deletingResourceId === resource.id ? "border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed" : "border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/15" }`} >
+                        <button onClick={() => handleRequestDeleteResource(resource)} disabled={deletingResourceId === resource.id} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${ deletingResourceId === resource.id ? "border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed" : "border-red-500/20 bg-red-500/10 text-red-300 hover:bg-red-500/15" }`} >
                           <Trash2 className="w-4 h-4" />
                           {deletingResourceId === resource.id ? "Eliminando..." : "Eliminar"}
                         </button>
                       )}
                     </div>
                   </div>
+
+                  {isImageResource(resource) && (
+                    <a href={resource.file_url} target="_blank" rel="noreferrer" className="mt-4 block overflow-hidden rounded-lg border border-slate-800 bg-slate-900/60">
+                      <img src={resource.file_url} alt={resource.original_filename} className="max-h-64 w-full object-contain" />
+                    </a>
+                  )}
 
                   {resource.note && (
                     <div className="mt-4 rounded-lg border border-slate-800 bg-slate-900/60 p-3">
@@ -554,6 +594,44 @@ export default function TaskDetail() {
           )}
         </div>
       </div>
+
+      <AlertDialog open={Boolean(resourceToDelete)} onOpenChange={(open) => { if (!open && deletingResourceId === null) { setResourceToDelete(null); } }} >
+        <AlertDialogContent className="border-slate-800 bg-slate-900 text-slate-100 shadow-2xl shadow-black/40">
+          <AlertDialogHeader>
+            <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full border border-red-500/20 bg-red-500/10 sm:mx-0">
+              <Trash2 className="h-5 w-5 text-red-300" />
+            </div>
+            <AlertDialogTitle className="text-xl text-white">
+              ¿Eliminar este recurso?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-400">
+              Esta acción eliminará el archivo de la tarea y no se podrá recuperar desde el sistema.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {resourceToDelete && (
+            <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+              <p className="text-slate-400 text-xs mb-1">Recurso seleccionado</p>
+              <p className="text-white font-medium break-all">
+                {resourceToDelete.original_filename}
+              </p>
+              <p className="text-slate-500 text-xs mt-2">
+                {formatBytes(resourceToDelete.size_bytes)} · {resourceToDelete.content_type || "Tipo no detectado"}
+              </p>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingResourceId !== null} className="border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-white" >
+              Cancelar
+            </AlertDialogCancel>
+            <button type="button" onClick={handleConfirmDeleteResource} disabled={deletingResourceId !== null} className="inline-flex items-center justify-center gap-2 rounded-md bg-red-500 px-4 py-2 text-sm font-medium text-white transition-all hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-60" >
+              <Trash2 className="h-4 w-4" />
+              {deletingResourceId !== null ? "Eliminando..." : "Sí, eliminar"}
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
         <div className="flex items-center gap-3 mb-4">

@@ -1,0 +1,77 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: neurokanban-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-neurokanban}
+      POSTGRES_USER: ${POSTGRES_USER:-neurokanban}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-neurokanban_local_password}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-neurokanban} -d ${POSTGRES_DB:-neurokanban}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - neurokanban-network
+
+  backend:
+    image: neurokanban-backend:local
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neurokanban-backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_NAME: ${APP_NAME:-NeuroKanban API}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-neurokanban}:${POSTGRES_PASSWORD:-neurokanban_local_password}@db:5432/${POSTGRES_DB:-neurokanban}
+      SQLALCHEMY_ECHO: ${SQLALCHEMY_ECHO:-false}
+      SECRET_KEY: ${SECRET_KEY:-change_this_secret_before_deploying_to_aws}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-120}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      BOOTSTRAP_DEFAULT_ADMIN: ${BOOTSTRAP_DEFAULT_ADMIN:-true}
+      BOOTSTRAP_ADMIN_FULL_NAME: ${BOOTSTRAP_ADMIN_FULL_NAME:-Administrador NeuroKanban}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@neurokanban.app}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin12345}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_ml_artifacts:/app/app/ml_artifacts
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - neurokanban-network
+
+  frontend:
+    image: neurokanban-frontend:local
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+    container_name: neurokanban-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - neurokanban-network
+
+volumes:
+  postgres_data:
+  backend_uploads:
+  backend_ml_artifacts:
+
+networks:
+  neurokanban-network:
+    driver: bridge

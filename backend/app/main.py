@@ -1,13 +1,20 @@
 from pathlib import Path
+import time
 
 import app.models  # noqa: F401
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 
-from app.config import APP_NAME
-from app.db import Base, engine
+from app.config import (
+    APP_NAME,
+    CORS_ORIGINS,
+    DATABASE_STARTUP_MAX_RETRIES,
+    DATABASE_STARTUP_RETRY_SECONDS,
+)
+from app.db import Base, SessionLocal, engine
 from app.routes.analytics import router as analytics_router
 from app.routes.auth import router as auth_router
 from app.routes.dashboard import router as dashboard_router
@@ -23,6 +30,7 @@ from app.routes.task_resources import router as task_resources_router
 from app.routes.tasks import router as tasks_router
 from app.routes.training_data import router as training_data_router
 from app.routes.users import router as users_router
+from app.services.bootstrap_service import bootstrap_application
 
 APP_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = APP_DIR.parent
@@ -32,16 +40,50 @@ TASK_RESOURCES_DIR = UPLOADS_DIR / "task_resources"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 TASK_RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
 
-Base.metadata.create_all(bind=engine)
+
+def initialize_database() -> None:
+    last_error: Exception | None = None
+
+    for attempt in range(1, DATABASE_STARTUP_MAX_RETRIES + 1):
+        try:
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
+
+            Base.metadata.create_all(bind=engine)
+
+            db = SessionLocal()
+            try:
+                result = bootstrap_application(db)
+                if result.roles_created or result.areas_created or result.skills_created or result.admin_created:
+                    print(
+                        "NeuroKanban bootstrap: "
+                        f"roles={result.roles_created}, "
+                        f"areas={result.areas_created}, "
+                        f"skills={result.skills_created}, "
+                        f"admin_created={result.admin_created}"
+                    )
+            finally:
+                db.close()
+
+            return
+        except OperationalError as exc:
+            last_error = exc
+            print(
+                "Esperando conexión con la base de datos "
+                f"({attempt}/{DATABASE_STARTUP_MAX_RETRIES})..."
+            )
+            time.sleep(DATABASE_STARTUP_RETRY_SECONDS)
+
+    raise RuntimeError("No se pudo inicializar la base de datos") from last_error
+
+
+initialize_database()
 
 app = FastAPI(title=APP_NAME)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

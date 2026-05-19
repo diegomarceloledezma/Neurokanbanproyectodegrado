@@ -15,6 +15,7 @@ import {
   getDashboardTeamMetrics,
   type DashboardTeamMetricsResponse,
 } from "../services/dashboardService";
+import { ErrorState, LoadingState } from "../components/PageState";
 
 const roleLabels: Record<string, string> = {
   leader: "Líder de equipo",
@@ -56,14 +57,19 @@ export default function TeamMetrics() {
   };
 
   if (loading) {
-    return <div className="text-slate-300">Cargando métricas del equipo...</div>;
+    return (
+      <LoadingState
+        title="Cargando métricas del equipo..."
+        description="Estamos calculando carga, desempeño, cumplimiento y distribución de tareas."
+      />
+    );
   }
 
   if (error || !metrics) {
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        {error || "No se pudieron cargar las métricas del equipo."}
-      </div>
+      <ErrorState
+        message={error || "No se pudieron cargar las métricas del equipo."}
+      />
     );
   }
 

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { FolderKanban, Users } from "lucide-react";
 import { getProjects, type ProjectResponse } from "../services/projectService";
 import { getAccessToken } from "../services/sessionService";
+import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 
 export default function Projects() {
   const navigate = useNavigate();
@@ -14,7 +15,7 @@ export default function Projects() {
 
   useEffect(() => {
     if (!token) {
-      navigate("/login", { replace: true });
+      navigate("/login?session=expired", { replace: true });
       return;
     }
 
@@ -36,7 +37,31 @@ export default function Projects() {
   }, [token, navigate]);
 
   if (loading) {
-    return <div className="text-slate-300">Cargando proyectos...</div>;
+    return (
+      <LoadingState
+        title="Cargando proyectos..."
+        description="Estamos consultando los proyectos disponibles para tu rol."
+      />
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-3xl text-white">Proyectos</h1>
+          <p className="text-slate-400 mt-2">
+            Consulta los proyectos registrados y entra al detalle de cada uno.
+          </p>
+        </div>
+
+        <ErrorState
+          message={error}
+          actionLabel="Volver al panel principal"
+          onAction={() => navigate("/")}
+        />
+      </div>
+    );
   }
 
   return (
@@ -48,16 +73,14 @@ export default function Projects() {
         </p>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300 text-sm">
-          {error}
-        </div>
-      )}
-
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-slate-400">
-          No hay proyectos registrados.
-        </div>
+        <EmptyState
+          icon={FolderKanban}
+          title="No hay proyectos registrados"
+          description="Cuando se creen proyectos, aparecerán aquí para entrar al detalle, revisar integrantes y abrir sus tableros Kanban."
+          actionLabel="Volver al panel principal"
+          onAction={() => navigate("/")}
+        />
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {projects.map((project) => (

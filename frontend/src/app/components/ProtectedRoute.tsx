@@ -42,7 +42,16 @@ export default function ProtectedRoute({
     const normalizedAllowedRoles = allowedRoles.map((role) => role.toLowerCase());
 
     if (!normalizedAllowedRoles.includes(currentRole)) {
-      return <Navigate to="/" replace />;
+      return (
+        <Navigate
+          to="/sin-acceso"
+          replace
+          state={{
+            from: `${location.pathname}${location.search}`,
+            requiredRoles: allowedRoles,
+          }}
+        />
+      );
     }
   }
 

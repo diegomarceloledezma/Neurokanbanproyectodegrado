@@ -5,11 +5,11 @@ import {
   CheckCircle2,
   ClipboardList,
   FolderOpen,
-  Loader2,
   PlayCircle,
 } from "lucide-react";
 import { getMyTasks, type MyTaskItem } from "../services/myTasksService";
 import { getAccessToken } from "../services/sessionService";
+import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 
 function humanizeStatus(status?: string) {
   const map: Record<string, string> = {
@@ -107,18 +107,20 @@ export default function MyTasks() {
 
   if (loading) {
     return (
-      <div className="text-slate-300 flex items-center gap-3">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        Cargando tus tareas...
-      </div>
+      <LoadingState
+        title="Cargando tus tareas..."
+        description="Estamos consultando tus asignaciones, prioridades y próximos vencimientos."
+      />
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
-        {error}
-      </div>
+      <ErrorState
+        message={error}
+        actionLabel="Volver al panel principal"
+        onAction={() => navigate("/")}
+      />
     );
   }
 
@@ -172,9 +174,14 @@ export default function MyTasks() {
         </div>
 
         {tasks.length === 0 ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-5 text-slate-400">
-            No tienes tareas asignadas por ahora.
-          </div>
+          <EmptyState
+            icon={ClipboardList}
+            title="No tienes tareas asignadas"
+            description="Cuando el líder te asigne una tarea, aparecerá en esta lista con su prioridad, fecha límite, estado y habilidades requeridas."
+            minHeightClassName="min-h-[240px]"
+            actionLabel="Ver proyectos"
+            onAction={() => navigate("/projects")}
+          />
         ) : (
           <div className="space-y-4">
             {tasks.map((task) => {

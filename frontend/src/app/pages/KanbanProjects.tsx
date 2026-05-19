@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { CheckSquare, FolderKanban, Users } from "lucide-react";
 import { getProjects, type ProjectResponse } from "../services/projectService";
 import { getAccessToken } from "../services/sessionService";
+import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 
 export default function KanbanProjects() {
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ export default function KanbanProjects() {
   useEffect(() => {
     const loadProjects = async () => {
       if (!token) {
-        navigate("/login");
+        navigate("/login?session=expired", { replace: true });
         return;
       }
 
@@ -36,7 +37,31 @@ export default function KanbanProjects() {
   }, [token, navigate]);
 
   if (loading) {
-    return <div className="text-slate-300">Cargando proyectos para Kanban...</div>;
+    return (
+      <LoadingState
+        title="Cargando tableros Kanban..."
+        description="Estamos preparando la lista de proyectos con tablero disponible."
+      />
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-3xl text-white">Tableros Kanban</h1>
+          <p className="text-slate-400 mt-2">
+            Selecciona el proyecto cuyo tablero deseas visualizar.
+          </p>
+        </div>
+
+        <ErrorState
+          message={error}
+          actionLabel="Volver al panel principal"
+          onAction={() => navigate("/")}
+        />
+      </div>
+    );
   }
 
   return (
@@ -48,16 +73,14 @@ export default function KanbanProjects() {
         </p>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-red-300 text-sm">
-          {error}
-        </div>
-      )}
-
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-slate-400">
-          No hay proyectos registrados.
-        </div>
+        <EmptyState
+          icon={CheckSquare}
+          title="No hay tableros disponibles"
+          description="Los tableros Kanban aparecerán cuando existan proyectos registrados en el sistema."
+          actionLabel="Ver proyectos"
+          onAction={() => navigate("/projects")}
+        />
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           {projects.map((project) => (

@@ -17,6 +17,7 @@ import ModelIntelligence from "./pages/ModelIntelligence";
 import MyTasks from "./pages/MyTasks";
 import MainLayout from "./components/MainLayout";
 import NotFound from "./pages/NotFound";
+import AccessDenied from "./pages/AccessDenied";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 export const router = createBrowserRouter([
@@ -38,6 +39,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: Dashboard },
       { path: "my-tasks", Component: MyTasks },
+      { path: "sin-acceso", Component: AccessDenied },
 
       { path: "projects", Component: Projects },
       { path: "projects/:id", Component: Project },

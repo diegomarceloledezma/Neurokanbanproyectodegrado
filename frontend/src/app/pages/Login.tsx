@@ -3,6 +3,7 @@ import { Eye, EyeOff, Lock, Mail } from "lucide-react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { login } from "../services/authService";
 import { isAuthenticated } from "../services/sessionService";
+import BrandLogo from "../components/BrandLogo";
 
 type LocationState = {
   from?: string;
@@ -74,12 +75,16 @@ export default function Login() {
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl text-white mb-2">Iniciar sesión</h1>
-          <p className="text-slate-400">
-            Accede a NeuroKanban con tu usuario o correo institucional.
-          </p>
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl shadow-cyan-950/20">
+        <div className="mb-8">
+          <BrandLogo variant="auth" centered className="mb-7" />
+
+          <div className="text-center">
+            <h1 className="text-3xl text-white mb-2">Iniciar sesión</h1>
+            <p className="text-slate-400">
+              Accede a NeuroKanban con tu usuario o correo institucional.
+            </p>
+          </div>
         </div>
 
         {sessionMessage && (

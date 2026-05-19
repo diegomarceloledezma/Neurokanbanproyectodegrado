@@ -13,6 +13,7 @@ import {
   ClipboardList,
 } from "lucide-react";
 import { getCurrentUser, clearSession } from "../services/sessionService";
+import BrandLogo from "./BrandLogo";
 
 const roleLabels: Record<string, string> = {
   admin: "Administrador",
@@ -123,8 +124,8 @@ export default function MainLayout() {
   return (
     <div className="h-screen bg-[#020617] text-white overflow-hidden">
       <aside className="fixed left-0 top-0 z-30 h-screen w-64 bg-[#081225] border-r border-slate-800 flex flex-col">
-        <div className="px-6 py-6 border-b border-slate-800 shrink-0">
-          <h1 className="text-2xl font-bold text-white">NeuroKanban</h1>
+        <div className="px-5 py-5 border-b border-slate-800 shrink-0">
+          <BrandLogo variant="sidebar" />
         </div>
 
         <nav className="flex-1 overflow-y-auto px-4 py-6 space-y-2">

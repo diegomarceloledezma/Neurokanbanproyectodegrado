@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Eye, EyeOff, Lock, Mail, User } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { register } from "../services/authService";
+import BrandLogo from "../components/BrandLogo";
 
 function validatePassword(password: string): string | null {
   if (password.length < 8) return "La contraseña debe tener al menos 8 caracteres";
@@ -69,12 +70,16 @@ export default function Register() {
 
   return (
     <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
-        <div className="mb-8 text-center">
-          <h1 className="text-3xl text-white mb-2">Crear cuenta</h1>
-          <p className="text-slate-400">
-            Registra un nuevo usuario para ingresar al sistema.
-          </p>
+      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl shadow-cyan-950/20">
+        <div className="mb-8">
+          <BrandLogo variant="auth" centered className="mb-7" />
+
+          <div className="text-center">
+            <h1 className="text-3xl text-white mb-2">Crear cuenta</h1>
+            <p className="text-slate-400">
+              Registra un nuevo usuario para ingresar al sistema.
+            </p>
+          </div>
         </div>
 
         {error && (

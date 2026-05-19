@@ -15,6 +15,7 @@ import {
   type DashboardOverviewResponse,
 } from "../services/dashboardService";
 import { getAccessToken, getCurrentUser } from "../services/sessionService";
+import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 
 const roleLabels: Record<string, string> = {
   admin: "Administrador",
@@ -162,22 +163,33 @@ export default function Dashboard() {
   }
 
   if (loading) {
-    return <div className="text-slate-300">Cargando dashboard...</div>;
+    return (
+      <LoadingState
+        title="Cargando dashboard..."
+        description="Estamos preparando el resumen operativo del sistema."
+      />
+    );
   }
 
   if (error) {
     return (
-      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-red-300">
-        {error}
-      </div>
+      <ErrorState
+        message={error}
+        actionLabel="Ir a proyectos"
+        onAction={() => navigate("/projects")}
+      />
     );
   }
 
   if (!overview) {
     return (
-      <div className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-slate-300">
-        No se encontró información para mostrar.
-      </div>
+      <EmptyState
+        icon={FolderKanban}
+        title="No hay información para mostrar"
+        description="Cuando existan proyectos, tareas e integrantes registrados, el dashboard mostrará el resumen operativo del sistema."
+        actionLabel="Ver proyectos"
+        onAction={() => navigate("/projects")}
+      />
     );
   }
 

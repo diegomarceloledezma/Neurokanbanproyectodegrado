@@ -8,6 +8,7 @@ import {
   type ProjectResponse,
 } from "../services/projectService";
 import { getAccessToken } from "../services/sessionService";
+import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 
 const roleLabels: Record<string, string> = {
   leader: "Líder de equipo",
@@ -29,7 +30,7 @@ export default function Team() {
   useEffect(() => {
     const loadInitialData = async () => {
       if (!token) {
-        navigate("/login");
+        navigate("/login?session=expired", { replace: true });
         return;
       }
 
@@ -86,7 +87,31 @@ export default function Team() {
   }, [members]);
 
   if (loading) {
-    return <div className="text-slate-300">Cargando equipo...</div>;
+    return (
+      <LoadingState
+        title="Cargando equipo..."
+        description="Estamos consultando proyectos e integrantes registrados."
+      />
+    );
+  }
+
+  if (error && projects.length === 0) {
+    return (
+      <div className="max-w-7xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-3xl text-white">Equipo</h1>
+          <p className="text-slate-400 mt-2">
+            Consulta los integrantes reales de cada proyecto y accede a su perfil.
+          </p>
+        </div>
+
+        <ErrorState
+          message={error}
+          actionLabel="Volver al panel principal"
+          onAction={() => navigate("/")}
+        />
+      </div>
+    );
   }
 
   return (
@@ -111,9 +136,14 @@ export default function Team() {
         </div>
 
         {projects.length === 0 ? (
-          <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-4 text-slate-400">
-            No hay proyectos registrados.
-          </div>
+          <EmptyState
+            icon={FolderKanban}
+            title="No hay proyectos para consultar"
+            description="Cuando existan proyectos, podrás seleccionar uno para revisar sus integrantes."
+            minHeightClassName="min-h-[220px]"
+            actionLabel="Volver al panel principal"
+            onAction={() => navigate("/")}
+          />
         ) : (
           <div className="max-w-xl">
             <label className="block text-slate-300 text-sm mb-2">Elegir proyecto</label>
@@ -142,7 +172,7 @@ export default function Team() {
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-5">
+        <div className="flex items-center gap-3 mb-5 flex-wrap">
           <Users className="w-5 h-5 text-purple-400" />
           <h2 className="text-xl text-white">Integrantes del proyecto</h2>
           <span className="px-3 py-1 rounded-lg bg-slate-800 text-slate-300 text-sm border border-slate-700">
@@ -151,11 +181,18 @@ export default function Team() {
         </div>
 
         {membersLoading ? (
-          <div className="text-slate-300">Cargando integrantes...</div>
+          <LoadingState
+            title="Cargando integrantes..."
+            description="Actualizando la lista del proyecto seleccionado."
+            minHeightClassName="min-h-[220px]"
+          />
         ) : sortedMembers.length === 0 ? (
-          <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-5 text-slate-400">
-            Este proyecto no tiene integrantes registrados.
-          </div>
+          <EmptyState
+            icon={Users}
+            title="Este proyecto no tiene integrantes"
+            description="Agrega integrantes al proyecto para que el módulo de recomendación pueda evaluar habilidades, disponibilidad y carga de trabajo."
+            minHeightClassName="min-h-[220px]"
+          />
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             {sortedMembers.map((member) => {

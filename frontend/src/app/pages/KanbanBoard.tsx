@@ -13,6 +13,7 @@ import {
 import { getTasksByProject, type TaskResponse } from "../services/taskService";
 import { getProjectById, type ProjectResponse } from "../services/projectService";
 import { getAccessToken } from "../services/sessionService";
+import { EmptyState, ErrorState, LoadingState } from "../components/PageState";
 
 const columns = [
   { id: "pending", name: "Pendientes", color: "border-slate-600" },
@@ -141,14 +142,21 @@ export default function KanbanBoard() {
   }, [tasks]);
 
   if (loading) {
-    return <div className="text-slate-300">Cargando tablero Kanban...</div>;
+    return (
+      <LoadingState
+        title="Cargando tablero Kanban..."
+        description="Estamos organizando las tareas por estado del flujo de trabajo."
+      />
+    );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-red-300">
-        {error}
-      </div>
+      <ErrorState
+        message={error}
+        actionLabel="Volver a tableros"
+        onAction={() => navigate("/kanban-projects")}
+      />
     );
   }
 
@@ -239,6 +247,17 @@ export default function KanbanBoard() {
           </div>
         </div>
       </div>
+
+      {tasks.length === 0 && (
+        <EmptyState
+          icon={FolderKanban}
+          title="Este tablero todavía no tiene tareas"
+          description="Crea la primera tarea del proyecto para empezar a visualizar el flujo Kanban y activar la recomendación inteligente."
+          minHeightClassName="min-h-[240px]"
+          actionLabel="Crear primera tarea"
+          onAction={() => navigate(`/task/create/${projectId}`)}
+        />
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
         {columns.map((column) => {

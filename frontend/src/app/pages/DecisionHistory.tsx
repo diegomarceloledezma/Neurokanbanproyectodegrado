@@ -15,6 +15,7 @@ import {
   getDecisionHistory,
   type DecisionHistoryItem,
 } from "../services/decisionHistoryService";
+import { EmptyState, LoadingState } from "../components/PageState";
 
 const sourceLabels: Record<string, string> = {
   manual: "Manual",
@@ -128,7 +129,12 @@ export default function DecisionHistory() {
   }, [items]);
 
   if (loading) {
-    return <div className="text-slate-300">Cargando historial de decisiones...</div>;
+    return (
+      <LoadingState
+        title="Cargando historial de decisiones..."
+        description="Estamos consultando asignaciones manuales, recomendadas e híbridas registradas en el sistema."
+      />
+    );
   }
 
   return (
@@ -328,9 +334,14 @@ export default function DecisionHistory() {
             </div>
           ))
         ) : (
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-8 text-center text-slate-400">
-            No hay decisiones registradas con los filtros actuales.
-          </div>
+          <EmptyState
+            icon={History}
+            title="No hay decisiones registradas"
+            description="Cuando se asignen tareas de forma manual, recomendada o híbrida, la trazabilidad aparecerá en esta sección. Si estás usando filtros, prueba ampliarlos."
+            minHeightClassName="min-h-[240px]"
+            actionLabel="Ver proyectos"
+            onAction={() => navigate("/projects")}
+          />
         )}
       </div>
     </div>

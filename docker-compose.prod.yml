@@ -1,0 +1,77 @@
+services:
+  proxy:
+    image: caddy:2.8-alpine
+    container_name: neurokanban-proxy
+    restart: unless-stopped
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      # Activar este puerto cuando exista dominio y HTTPS:
+      # - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - neurokanban_net
+
+  frontend:
+    image: neurokanban-frontend:prod
+    container_name: neurokanban-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    restart: unless-stopped
+    networks:
+      - neurokanban_net
+
+  backend:
+    image: neurokanban-backend:prod
+    container_name: neurokanban-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - neurokanban_uploads:/app/uploads
+      - neurokanban_ml_artifacts:/app/app/ml_artifacts
+    networks:
+      - neurokanban_net
+
+  db:
+    image: postgres:16-alpine
+    container_name: neurokanban-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-neurokanban}
+      POSTGRES_USER: ${POSTGRES_USER:-neurokanban}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - neurokanban_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-neurokanban} -d ${POSTGRES_DB:-neurokanban}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks:
+      - neurokanban_net
+
+volumes:
+  neurokanban_postgres_data:
+  neurokanban_uploads:
+  neurokanban_ml_artifacts:
+  caddy_data:
+  caddy_config:
+
+networks:
+  neurokanban_net:
+    driver: bridge

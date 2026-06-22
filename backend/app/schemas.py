@@ -163,7 +163,8 @@ class ProjectBase(BaseModel):
 
 
 class ProjectCreate(BaseModel):
-    team_id: int
+    # Si team_id llega vacío o null, el backend creará/usará un equipo general automáticamente.
+    team_id: Optional[int] = None
     area_id: Optional[int] = None
     name: str
     description: Optional[str] = None

@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db import get_db
-from app.models import Project, ProjectMember, Task, User
+from app.models import Area, Project, ProjectMember, Task, Team, User
 from app.routes.auth import get_current_user, has_any_role
 from app.schemas import (
     AvailableUserItem,
@@ -17,6 +17,14 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
+
+
+DEFAULT_TEAM_NAME = "Equipo general NeuroKanban"
+DEFAULT_TEAM_DESCRIPTION = (
+    "Equipo base creado automáticamente para permitir el primer proyecto "
+    "en despliegues nuevos sin datos cargados."
+)
+DEFAULT_AREA_NAME = "Multidisciplinario"
 
 
 def _load_project_with_members(db: Session, project_id: int):
@@ -69,6 +77,81 @@ def _can_manage_project(db: Session, project: Project, current_user: User) -> bo
             return True
 
     return False
+
+
+def _get_default_area(db: Session) -> Area | None:
+    area = (
+        db.query(Area)
+        .filter(func.lower(Area.name) == DEFAULT_AREA_NAME.lower())
+        .first()
+    )
+
+    if area:
+        return area
+
+    area = Area(
+        name=DEFAULT_AREA_NAME,
+        description="Equipos con distintas áreas",
+    )
+    db.add(area)
+    db.flush()
+    return area
+
+
+def _get_or_create_default_team(db: Session, preferred_area_id: int | None = None) -> Team:
+    team = (
+        db.query(Team)
+        .filter(func.lower(Team.name) == DEFAULT_TEAM_NAME.lower())
+        .first()
+    )
+
+    if team:
+        return team
+
+    default_area = None
+    if preferred_area_id:
+        default_area = db.query(Area).filter(Area.id == preferred_area_id).first()
+
+    if not default_area:
+        default_area = _get_default_area(db)
+
+    team = Team(
+        name=DEFAULT_TEAM_NAME,
+        description=DEFAULT_TEAM_DESCRIPTION,
+        area_id=default_area.id if default_area else None,
+    )
+
+    db.add(team)
+    db.flush()
+    return team
+
+
+def _resolve_project_team_and_area(
+    db: Session,
+    payload: ProjectCreate,
+) -> tuple[int, int | None]:
+    selected_team: Team | None = None
+
+    if payload.team_id:
+        selected_team = db.query(Team).filter(Team.id == payload.team_id).first()
+
+        if not selected_team:
+            raise HTTPException(status_code=404, detail="Equipo no encontrado")
+
+    if not selected_team:
+        selected_team = _get_or_create_default_team(db, payload.area_id)
+
+    selected_area_id = payload.area_id
+
+    if selected_area_id:
+        area = db.query(Area).filter(Area.id == selected_area_id).first()
+        if not area:
+            raise HTTPException(status_code=404, detail="Área no encontrada")
+
+    if selected_area_id is None and selected_team.area_id:
+        selected_area_id = selected_team.area_id
+
+    return selected_team.id, selected_area_id
 
 
 @router.get("/", response_model=List[ProjectBase])
@@ -140,13 +223,19 @@ def create_project(
             detail="No tienes permisos para crear proyectos",
         )
 
+    cleaned_name = payload.name.strip()
+    if not cleaned_name:
+        raise HTTPException(status_code=400, detail="El nombre del proyecto es obligatorio")
+
     try:
+        team_id, area_id = _resolve_project_team_and_area(db, payload)
+
         new_project = Project(
-            team_id=payload.team_id,
-            area_id=payload.area_id,
-            name=payload.name,
-            description=payload.description,
-            status=payload.status,
+            team_id=team_id,
+            area_id=area_id,
+            name=cleaned_name,
+            description=payload.description.strip() if payload.description else None,
+            status=payload.status or "active",
             start_date=payload.start_date,
             end_date=payload.end_date,
             created_by=current_user.id,
@@ -172,9 +261,15 @@ def create_project(
         project = _load_project_with_members(db, new_project.id)
         return project
 
+    except HTTPException:
+        db.rollback()
+        raise
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="No se pudo crear el proyecto")
+    except Exception:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error interno al crear el proyecto")
 
 
 @router.get("/{project_id}/members", response_model=List[ProjectMemberResponse])

@@ -43,6 +43,16 @@ export type ProjectResponse = {
   members?: ProjectMember[];
 };
 
+export type CreateProjectPayload = {
+  team_id?: number | null;
+  area_id?: number | null;
+  name: string;
+  description?: string | null;
+  status?: string;
+  start_date?: string | null;
+  end_date?: string | null;
+};
+
 export type AvailableProjectUser = {
   id: number;
   full_name: string;
@@ -73,6 +83,26 @@ export async function getProjects(token: string): Promise<ProjectResponse[]> {
 
   if (!response.ok) {
     await parseApiError(response, "No se pudieron cargar los proyectos");
+  }
+
+  return response.json();
+}
+
+export async function createProject(
+  payload: CreateProjectPayload,
+  token: string
+): Promise<ProjectResponse> {
+  const response = await fetch(`${API_BASE_URL}/projects/`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    await parseApiError(response, "No se pudo crear el proyecto");
   }
 
   return response.json();
